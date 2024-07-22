@@ -64,7 +64,7 @@ class ResUNet(nn.Module):
         self.encoder= nn.Sequential(
             *list(self.encoder.children())[:-2]
         )
-        
+
         self.bottleneck= doubleConv(512, 1024)
 
         self.dec1= decoderBlock(1024, 512)
@@ -83,8 +83,8 @@ class ResUNet(nn.Module):
             nn.Dropout(0.5),
             nn.Linear(32, 1)
         )
-
-    def forward(self, x:torch.Tensor)->torch.Tensor:
+    
+    def forward(self, x:torch.Tensor,  is_with_tabular: bool= False)->torch.Tensor:
         e1= self.encoder[:4](x)
         e2= self.encoder[5](e1)
         e3= self.encoder[6](e2)
@@ -97,17 +97,16 @@ class ResUNet(nn.Module):
         d3= self.dec3(d2, e2)
         d4= self.dec4(d3, e1)
 
-        flat= self.flatten(d4)
-        return self.ffn(flat)
+        if is_with_tabular:
+            return self.flatten(d4)
+        
+        return self.ffn(self.flatten(d4))
     
 class ResUNetWithTabular(nn.Module):
-    def __init__(self, n_cont_features:int, n_bin_features:int) -> None:
+    def __init__(self, n_cont_features:int, n_bin_features:int)->None:
         super().__init__()
         self.fttransformer= FTTransformer(n_cont_features, n_bin_features)
         self.resunet= ResUNet()
-        self.resunet= nn.Sequential(
-            *list(self.resunet.children())[:-1]
-        )
 
         self.ffn= nn.Sequential(
             nn.Linear(128, 64),
@@ -116,8 +115,8 @@ class ResUNetWithTabular(nn.Module):
             nn.Linear(64, 1)
         )
 
-    def forward(self, image, tabular_cont, tabular_bin):
-        image_features= self.resunet(image)
+    def forward(self, image: torch.Tensor, tabular_cont: torch.Tensor, tabular_bin:torch.Tensor)->torch.Tensor:
+        image_features= self.resunet(image, True)
         tabular_features= self.fttransformer(tabular_cont, tabular_bin)
 
         x= torch.cat([image_features, tabular_features], dim=1)
