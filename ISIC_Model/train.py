@@ -1,6 +1,6 @@
 import torch.utils
-from arch import ResUNet, ResUNetWithTabular
 import torch
+from arch import ResUNet, ResUNetWithTabular
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
@@ -9,10 +9,10 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.cuda.amp import GradScaler, autocast
 from tqdm import tqdm
 from PIL import Image
-from typing import Tuple, Any, Union, List
+from typing import Tuple, Any, Union, List, Dict
 from imblearn.over_sampling import RandomOverSampler
 from sklearn.metrics import roc_auc_score
-import pandas, numpy, fnmatch, os
+import pandas, numpy, fnmatch, os, gc
 
 IMAGE_DIR= os.path.join(os.path.dirname(__file__), 
                         '../data/train-image/image')
@@ -37,15 +37,16 @@ valid_transforms = transforms.Compose([
 ])
 
 class SkinDataset(Dataset):
-    def __init__(self, df:pandas.Series, transform) -> None:
+    def __init__(self, df:pandas.Series, transform, image_dir:str) -> None:
         super().__init__()
         self.df= df
+        self.image_dir= image_dir
+        self.transform= transform
+        
         self.df_cont= self.df.drop(columns=['isic_id', 'target', 'patient_id', 'sex', 'anterior torso',
        'head/neck', 'lower extremity', 'posterior torso', 'upper extremity'])
         self.df_bin= self.df[['sex', 'anterior torso', 'head/neck', 'lower extremity', 'posterior torso', 
                              'upper extremity']]
-        self.image_dir= IMAGE_DIR
-        self.transform= transform
 
     def __len__(self):
         return len(self.df)
@@ -64,8 +65,12 @@ class SkinDataset(Dataset):
 
 def oversample(data: pandas.DataFrame):
     ros= RandomOverSampler(random_state=42)
-    data, _= ros.fit_resample(data, data['target'])
-    return data
+    X= data.drop(columns=['target'])
+    y= data['target']
+
+    X, y= ros.fit_resample(X, y)
+
+    return pandas.concat([X, pandas.Series(y, name='target')], axis=1)
 
 def partial_auc(labels, predictions, min_tpr: float=0.80):
     labels = numpy.asarray(labels)
@@ -80,17 +85,16 @@ def partial_auc(labels, predictions, min_tpr: float=0.80):
     
     return 0.5 * max_fpr**2 + (max_fpr - 0.5 * max_fpr**2) / (1.0 - 0.5) * (partial_auc_scaled - 0.5)
 
-def train_evaluate_model(data:pandas.DataFrame, epochs:int, train_steps:int, valid_steps:int, splits: List[Any], model: Union[ResUNet, ResUNetWithTabular]):
+def train_evaluate_model(data:pandas.DataFrame, epochs:int, config: Dict[str, str], splits: List[Any], model: Union[ResUNet, ResUNetWithTabular]):
     assert isinstance(model, (ResUNet, ResUNetWithTabular)), 'Model Not Supported'
     
-    if isinstance(model, ResUNet):
-        model_name= 'ResUNet'
-    elif isinstance(model, ResUNetWithTabular):
-        model_name= 'ResUNetWithTabular'
-    
     model.to('cuda')
-    optimizer= AdamW(model.parameters(), lr= 0.005)
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5)
+    model_name= config['model']['name']
+    train_steps= config['training']['train_steps']
+    valid_steps= config['training']['valid_steps']
+    
+    optimizer= AdamW(model.parameters(), lr= config['training']['lr'])
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=config['training']['patience'])
     criterion= torch.nn.BCEWithLogitsLoss()
     scaler= GradScaler()
 
@@ -108,11 +112,11 @@ def train_evaluate_model(data:pandas.DataFrame, epochs:int, train_steps:int, val
     for fold, (train_idx, valid_idx) in enumerate(tqdm(splits, desc="Splits")):
         print(f"Fold {fold + 1}")
 
-        train_data= oversample(data.iloc[train_idx].reset_index(drop=True))
+        train_data= data.iloc[train_idx].reset_index(drop=True)
         valid_data= data.iloc[valid_idx].reset_index(drop=True)
 
-        train_dataset= SkinDataset(train_data, train_transforms)
-        valid_dataset= SkinDataset(valid_data, valid_transforms)
+        train_dataset= SkinDataset(train_data, train_transforms, config['data']['image_dir'])
+        valid_dataset= SkinDataset(valid_data, valid_transforms, config['data']['image_dir'])
 
         train_loader= DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=20, pin_memory=True)
         valid_loader= DataLoader(valid_dataset, batch_size=32, shuffle=True, num_workers=20, pin_memory=True)
@@ -128,7 +132,6 @@ def train_evaluate_model(data:pandas.DataFrame, epochs:int, train_steps:int, val
                     if step >= train_steps:
                         break
 
-                    optimizer.zero_grad()
                     if isinstance(model, ResUNet):
                         images, labels= images.to('cuda'), labels.to('cuda').float()
 
@@ -144,6 +147,7 @@ def train_evaluate_model(data:pandas.DataFrame, epochs:int, train_steps:int, val
                             outputs= model(images, tabular_cont, tabular_bin)
                             loss= criterion(outputs.squeeze(dim= 1), labels)
 
+                    optimizer.zero_grad()
                     scaler.scale(loss).backward()
                     torch.nn.utils.clip_grad_norm(model.parameters() , max_norm=1, norm_type=1)
                     scaler.step(optimizer)
@@ -206,6 +210,8 @@ def train_evaluate_model(data:pandas.DataFrame, epochs:int, train_steps:int, val
                 writer.add_scalar('Partial AUC/valid', p_auc, fold*epochs + epoch)
 
             scheduler.step(val_loss)
+            torch.cuda.empty_cache()
+            gc.collect()
 
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
@@ -225,13 +231,25 @@ def train_evaluate_model(data:pandas.DataFrame, epochs:int, train_steps:int, val
 if __name__ =='__main__':
     from sklearn.model_selection import StratifiedGroupKFold
     from train import train_evaluate_model
-    import warnings, pandas
+    import warnings, pandas, yaml
 
     warnings.filterwarnings('ignore')
 
-    metadata= pandas.read_csv(os.path.join(os.path.dirname(__file__), 
-                        '../data/ppcMetadata.csv'))
+    def load_config(fp):
+        with open(fp, 'r') as file:
+            return yaml.safe_load(file)
+    
+    config= load_config(os.path.join(os.path.dirname(__file__), 'config.yaml'))
+    metadata= pandas.read_csv(os.path.join(os.path.dirname(__file__), config['data']['metadata_file']))
+    metadata= oversample(metadata)
+
     splits= list(StratifiedGroupKFold(n_splits=2).split(metadata, metadata['target'], groups= metadata['patient_id']))
 
-    train_evaluate_model(metadata, epochs=50, train_steps=500, valid_steps=250, splits=splits,
-                         model= ResUNet())
+    if config['model']['name'] == 'ResUNetWithTabular':
+        model = ResUNetWithTabular(config['model']['cont_features'], config['model']['bin_features'])
+    elif config['model']['name'] == 'ResUNet':
+        model = ResUNet()
+    else:
+        raise ValueError(f"Unsupported model: {config['model']['name']}")
+    
+    train_evaluate_model(metadata, config, splits, model)
