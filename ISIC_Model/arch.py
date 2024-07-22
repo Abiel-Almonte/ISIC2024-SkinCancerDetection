@@ -6,23 +6,22 @@ class FTTransformer(nn.Module):
     def __init__(self, n_cont_features:int, n_bin_features:int):
         super().__init__()
 
-        self.cont_projection = nn.Linear(n_cont_features, 512)
-        self.bin_embedding= nn.Embedding(n_bin_features, 512)
+        self.cont_projection = nn.Linear(n_cont_features, 256)
+        self.bin_embedding= nn.Embedding(n_bin_features, 256)
 
         self.transformer_encoder = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(d_model= 1024, nhead= 8), num_layers= 6)
+            nn.TransformerEncoderLayer(d_model= 512, nhead= 8), num_layers= 6)
         
         self.ffn= nn.Sequential(
-            nn.Linear(1024, 512),
+            nn.Linear(512, 256),
             nn.ReLU(),
             nn.Dropout(0.5),
-            nn.Linear(512, 64)
+            nn.Linear(256, 64)
         )
 
     def forward(self, cont_features: torch.Tensor, bin_features:torch.Tensor):
-        #normalize b/c of nan loss values
+        #normalize
         cont_features= (cont_features - cont_features.mean(dim=0)) / (cont_features.std(dim=0) + 1e-6)
-        ##########
 
         x= torch.cat([self.cont_projection(cont_features), self.bin_embedding(bin_features).sum(dim=1)], dim=1)
         x= self.transformer_encoder(x.unsqueeze(1))
@@ -62,6 +61,7 @@ class ResUNet(nn.Module):
 
         self.is_with_tabular= is_with_tabular
 
+        #backbone
         self.encoder= models.resnet18(weights= models.ResNet18_Weights.IMAGENET1K_V1)
         self.encoder= nn.Sequential(
             *list(self.encoder.children())[:-2]
