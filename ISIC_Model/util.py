@@ -81,13 +81,14 @@ def partial_auc(labels, predictions, min_tpr: float=0.80):
     
     return 0.5 * max_fpr**2 + (max_fpr - 0.5 * max_fpr**2) / (1.0 - 0.5) * (partial_auc_scaled - 0.5)
 
-def train_evaluate_model(data:pandas.DataFrame, epochs:int, config: Dict[str, str], splits: List[Any], model: Union[ResUNet, ResUNetWithTabular]):
+def train_evaluate_model(data:pandas.DataFrame, config: Dict[str, str], splits: List[Any], model: Union[ResUNet, ResUNetWithTabular]):
     assert isinstance(model, (ResUNet, ResUNetWithTabular)), 'Model Not Supported'
     
     model.to('cuda')
     model_name= config['model']['name']
     train_steps= config['training']['train_steps']
     valid_steps= config['training']['valid_steps']
+    epochs= config['training']['epochs']
     log_dir= os.path.join(os.path.dirname(__file__), config['logging']['log_dir'])
 
     optimizer= AdamW(model.parameters(), lr= config['training']['lr'])
@@ -152,7 +153,7 @@ def train_evaluate_model(data:pandas.DataFrame, epochs:int, config: Dict[str, st
 
                     train_loss+= loss.item()
 
-                    writer.add_scalar('Loss/train', loss.item(), fold*epochs + epoch*train_steps + step)
+                    writer.add_scalar('Loss/train', loss.item(), (fold*epochs + epoch*train_steps + step))
                     bar.set_postfix(loss= loss.item(), refresh=True)
                     bar.update(1)
 
@@ -190,7 +191,7 @@ def train_evaluate_model(data:pandas.DataFrame, epochs:int, config: Dict[str, st
                         all_labels.append(labels.cpu().numpy())
                         all_preds.append(probabilities.cpu().numpy())
 
-                        writer.add_scalar('Loss/valid', loss.item(), fold*epochs + epoch*valid_steps + step)
+                        writer.add_scalar('Loss/valid', loss.item(), (fold*epochs + epoch*valid_steps + step))
                         bar.set_postfix(loss= loss.item(), refresh=True)
                         bar.update(1)
 
