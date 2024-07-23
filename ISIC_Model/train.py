@@ -8,8 +8,8 @@ config= load_config(os.path.join(os.path.dirname(__file__), 'config.yaml'))
 set_seed(config['seed'])
 
 model_name= config['model']['name']
-metadata= pandas.read_csv(os.path.join(os.path.dirname(__file__), config['data']['metadata_file']))
-metadata, metadata_test= prepare(metadata,  config['seed'])
+metadata= pandas.read_csv(os.path.join(os.path.dirname(__file__), config['data']['metadata_file'])).drop(columns= ['Unnamed: 0']) #duplicate index
+metadata, metadata_test= prepare(metadata, config['testing']['test_size'], config['seed'])
 splits= list(StratifiedGroupKFold(n_splits=2).split(metadata, metadata['target'], groups= metadata['patient_id']))
 
 if model_name == 'ResUNetWithTabular':
