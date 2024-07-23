@@ -4,14 +4,23 @@ model:
   cont_features: 32
   bin_features: 6
 
+testing:
+  test: True
+  batch_size: 10
+  num_workers: 5
+  ck: null
+  run: null
+
 training:
   lr: 0.005
   batch_size: 32
+  num_workers: 20
   epochs: 50
   train_steps: 500
   valid_steps: 250
-  patience: 10
+  patience: 5
   max_norm: 1
+  norm_type: 1
 
 data:
   image_dir: '../data/train-image/image'
