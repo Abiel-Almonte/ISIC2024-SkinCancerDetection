@@ -9,10 +9,12 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.cuda.amp import GradScaler, autocast
 from tqdm import tqdm
 from PIL import Image
-from typing import Tuple, Any, Union, List, Dict
-from imblearn.over_sampling import RandomOverSampler
+from typing import Tuple, Any, Union, List, Dict, Callable
 from sklearn.metrics import roc_auc_score
-import pandas, numpy, fnmatch, os, gc
+import pandas, numpy, fnmatch, os, gc, yaml, random, json
+from sklearn.model_selection import train_test_split
+from imblearn.over_sampling import RandomOverSampler
+
 
 TRAIN_TRANSFORM = transforms.Compose([
     transforms.Resize(480),
@@ -25,7 +27,7 @@ TRAIN_TRANSFORM = transforms.Compose([
     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
 
-VALID_TRANSFORM = transforms.Compose([
+TRANSFORM = transforms.Compose([
     transforms.Resize(480),
     transforms.CenterCrop(448),
     transforms.ToTensor(),
@@ -59,15 +61,6 @@ class SkinDataset(Dataset):
 
         return image_tensor, tabular_cont, tabular_bin, label
 
-def oversample(data: pandas.DataFrame):
-    ros= RandomOverSampler(random_state=42)
-    X= data.drop(columns=['target'])
-    y= data['target']
-
-    X, y= ros.fit_resample(X, y)
-
-    return pandas.concat([X, pandas.Series(y, name='target')], axis=1)
-
 def partial_auc(labels, predictions, min_tpr: float=0.80):
     labels = numpy.asarray(labels)
     predictions = numpy.asarray(predictions)
@@ -76,12 +69,10 @@ def partial_auc(labels, predictions, min_tpr: float=0.80):
     predictions = 1.0 - predictions
 
     max_fpr = 1-min_tpr
-
     partial_auc_scaled = roc_auc_score(labels, predictions, max_fpr=max_fpr)
-    
     return 0.5 * max_fpr**2 + (max_fpr - 0.5 * max_fpr**2) / (1.0 - 0.5) * (partial_auc_scaled - 0.5)
 
-def train_evaluate_model(data:pandas.DataFrame, config: Dict[str, str], splits: List[Any], model: Union[ResUNet, ResUNetWithTabular]):
+def train_evaluate_model(data:pandas.DataFrame, config: Dict[str, str], splits: List[Any], model: Union[ResUNet, ResUNetWithTabular], **kwargs):
     assert isinstance(model, (ResUNet, ResUNetWithTabular)), 'Model Not Supported'
     
     model.to('cuda')
@@ -89,23 +80,24 @@ def train_evaluate_model(data:pandas.DataFrame, config: Dict[str, str], splits: 
     train_steps= config['training']['train_steps']
     valid_steps= config['training']['valid_steps']
     epochs= config['training']['epochs']
+    patience= config['training']['patience']
     log_dir= os.path.join(os.path.dirname(__file__), config['logging']['log_dir'])
+    img_dir= os.path.join(os.path.dirname(__file__), config['data']['image_dir'])
 
     optimizer= AdamW(model.parameters(), lr= config['training']['lr'])
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=config['training']['patience'])
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', 
+                                  factor=0.1, patience=patience)
     criterion= torch.nn.BCEWithLogitsLoss()
     scaler= GradScaler()
 
-    num_runs=len(fnmatch.filter(os.listdir(os.path.join(log_dir, 'runs')), f"{model_name}*"))
-    num_cks= len(fnmatch.filter(os.listdir(os.path.join(log_dir, 'checkpoints')), f"{model_name}*"))
+    num_runs=len(fnmatch.filter(os.listdir(os.path.join(log_dir, 'runs')), f"{model_name}_*"))
+    num_cks= len(fnmatch.filter(os.listdir(os.path.join(log_dir, 'checkpoints')), f"{model_name}_*"))
     checkpoint_name= f'{model_name}_ck{num_cks}'
 
-    if not os.path.isdir(os.path.join(log_dir, f'runs/{model_name}_run{num_runs}/')):
-        os.mkdir(os.path.join(log_dir, f'runs/{model_name}_run{num_runs}/'))
-    if not os.path.isdir(os.path.join(log_dir, f'checkpoints/{model_name}_ck{num_runs}/')):
-        os.mkdir(os.path.join(log_dir, f'checkpoints/{model_name}_ck{num_runs}/'))
-
+    os.mkdir(os.path.join(log_dir, f'runs/{model_name}_run{num_runs}/'))
+    os.mkdir(os.path.join(log_dir, f'checkpoints/{model_name}_ck{num_runs}/'))
     writer= SummaryWriter(log_dir=os.path.join(os.path.join(log_dir, f'runs/{model_name}_run{num_runs}/')))
+
 
     for fold, (train_idx, valid_idx) in enumerate(tqdm(splits, desc="Splits")):
         print(f"Fold {fold + 1}")
@@ -113,14 +105,13 @@ def train_evaluate_model(data:pandas.DataFrame, config: Dict[str, str], splits: 
         train_data= data.iloc[train_idx].reset_index(drop=True)
         valid_data= data.iloc[valid_idx].reset_index(drop=True)
 
-        train_dataset= SkinDataset(train_data, TRAIN_TRANSFORM, config['data']['image_dir'])
-        valid_dataset= SkinDataset(valid_data, VALID_TRANSFORM, config['data']['image_dir'])
+        train_dataset= SkinDataset(train_data, TRAIN_TRANSFORM, img_dir)
+        valid_dataset= SkinDataset(valid_data, TRANSFORM, img_dir)
 
-        train_loader= DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=20, pin_memory=True)
-        valid_loader= DataLoader(valid_dataset, batch_size=32, shuffle=True, num_workers=20, pin_memory=True)
+        train_loader= DataLoader(train_dataset, batch_size=config['training']['batch_size'], shuffle=True, num_workers=config['training']['num_workers'], pin_memory=True)
+        valid_loader= DataLoader(valid_dataset, batch_size=config['training']['batch_size'], shuffle=True, num_workers=config['training']['num_workers'], pin_memory=True)
 
         best_val_loss = float('inf')
-        patience= 0
         for epoch in tqdm(range(epochs), desc='Epochs'):
 
             model.train()
@@ -147,13 +138,14 @@ def train_evaluate_model(data:pandas.DataFrame, config: Dict[str, str], splits: 
 
                     optimizer.zero_grad()
                     scaler.scale(loss).backward()
-                    torch.nn.utils.clip_grad_norm(model.parameters() , max_norm=1, norm_type=1)
+                    torch.nn.utils.clip_grad_norm(model.parameters() , 
+                        max_norm=config['training']['max_norm'], norm_type=config['training']['norm_type'])
                     scaler.step(optimizer)
                     scaler.update()
 
                     train_loss+= loss.item()
 
-                    writer.add_scalar('Loss/train', loss.item(), (fold*epochs + epoch*train_steps + step))
+                    writer.add_scalar('Loss/train', loss.item(), ((fold)*epochs + epoch*train_steps + step))
                     bar.set_postfix(loss= loss.item(), refresh=True)
                     bar.update(1)
 
@@ -188,10 +180,10 @@ def train_evaluate_model(data:pandas.DataFrame, config: Dict[str, str], splits: 
 
                         val_loss+= loss.item()
 
-                        all_labels.append(labels.cpu().numpy())
-                        all_preds.append(probabilities.cpu().numpy())
+                        all_labels.append(labels.detach().cpu().numpy())
+                        all_preds.append(probabilities.detach().cpu().numpy())
 
-                        writer.add_scalar('Loss/valid', loss.item(), (fold*epochs + epoch*valid_steps + step))
+                        writer.add_scalar('Loss/valid', loss.item(), ((fold+ 1)*epochs + epoch*valid_steps + step))
                         bar.set_postfix(loss= loss.item(), refresh=True)
                         bar.update(1)
 
@@ -215,7 +207,7 @@ def train_evaluate_model(data:pandas.DataFrame, config: Dict[str, str], splits: 
                 best_val_loss = val_loss
                 patience = 0
 
-                torch.save(model.state_dict(), os.path.join(log_dir, f'checkpoints/{checkpoint_name}/best_{model_name}_fold_{fold+1}.pt'))
+                torch.save(model.state_dict(), os.path.join(log_dir, f'checkpoints/{checkpoint_name}/{model_name}_fold_{fold+1}.pt'))
                 print(f' Saved best model for fold {fold + 1} with validation loss: {val_loss:.4e}')
 
             else:
@@ -224,4 +216,101 @@ def train_evaluate_model(data:pandas.DataFrame, config: Dict[str, str], splits: 
                     print(f' Early stopping triggered after {fold*epochs + epoch + 1} total epochs')
                     break
 
-    torch.save(model.state_dict(), os.path.join(log_dir, f'checkpoints/{checkpoint_name}/final_{model_name}.pt'))
+    torch.save(model.state_dict(), os.path.join(log_dir, f'checkpoints/{checkpoint_name}/{model_name}_final.pt'))
+    return checkpoint_name, num_runs
+
+def test_model(data:pandas.DataFrame, config: Dict[str, str],  model: Union[ResUNet, ResUNetWithTabular], **kwargs)-> Any:
+    img_dir= os.path.join(os.path.dirname(__file__), config['data']['image_dir'])
+    log_dir= os.path.join(os.path.dirname(__file__), config['logging']['log_dir'])
+
+    test_dataset= SkinDataset(data, TRANSFORM, img_dir)
+    test_loader= DataLoader(test_dataset, batch_size=config['testing']['batch_size'], shuffle=False, num_workers=config['testing']['num_workers'])
+    all_labels, all_preds= [], []
+
+    ck_fp= os.path.join(log_dir, f"checkpoints/{config['testing']['ck']}/{config['model']['name']}_final.pt")
+    run_fp_for_metric= os.path.join(log_dir, f"runs/{config['model']['name']}_run{config['testing']['run']}/metric.json")
+
+    state_dict= torch.load(ck_fp)
+    model.load_state_dict(state_dict)
+    model.to('cuda').eval()
+
+    for images, tabular_cont, tabular_bin, labels in tqdm(test_loader,  desc='Test Batches', leave=False):
+        if isinstance(model, ResUNet):
+            images, labels= images.to('cuda'), labels.to('cuda').float()
+            outputs= model(images)
+                        
+        elif isinstance(model, ResUNetWithTabular):
+            tabular_cont, tabular_bin= tabular_cont.to('cuda'), tabular_bin.to('cuda')
+            images, labels= images.to('cuda'), labels.to('cuda').float()
+            outputs= model(images, tabular_cont, tabular_bin)
+
+        probabilities= torch.sigmoid(outputs).detach().cpu()
+        all_labels.append(labels.detach().cpu())
+        all_preds.append(probabilities)
+
+    all_labels= numpy.concatenate(all_labels)
+    all_preds= numpy.concatenate(all_preds)
+    unique_labels = numpy.unique(all_labels)
+
+    if len(unique_labels) < 2:
+        print(f' Warning: Only one class present in labels. Unique labels: {unique_labels}')
+    else:
+        pAUC= partial_auc(all_labels, all_preds)
+        with open(run_fp_for_metric, 'w') as file:
+            json.dump({'Partial AUC': round(pAUC, 3)}, file)
+        return pAUC
+    
+    return None
+
+def train_evaluate_test(train_evaluate_args: Dict[Any, Any], test_args: Dict[Any, Any]):
+    ck, run= wrap_cuda_streamer(train_evaluate_model, train_evaluate_args)
+    if test_args is not None:
+        test_args['config']['testing'].update({'ck': ck, 'run': run})
+        return wrap_cuda_streamer(test_model, test_args)
+
+def wrap_cuda_streamer(fn: Callable[[Any], Any], kwargs: Dict[str, Any]):
+    stream= torch.cuda.Stream()
+
+    with torch.cuda.stream(stream):
+        res= fn(**kwargs)
+
+    torch.cuda.current_stream().wait_stream(stream)
+    del stream
+    torch.cuda.empty_cache()
+    return res
+
+def load_config(fp):
+    with open(fp, 'r') as file:
+        return yaml.safe_load(file)
+    
+def set_seed(seed: int= 42):
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    random.seed(seed)
+    numpy.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+def oversample(data: pandas.DataFrame, seed: int):
+    ros= RandomOverSampler(random_state=seed)
+    X= data.drop(columns=['target'])
+    y= data['target']
+
+    X, y= ros.fit_resample(X, y)
+
+    return pandas.concat([X, pandas.Series(y, name='target')], axis=1)
+
+def prepare(data: pandas.DataFrame, seed:int):
+    X_train, X_test, y_train, y_test= train_test_split(
+        data.drop(columns=['target']),
+        data['target'], 
+        test_size=1059,
+        random_state=seed, 
+        stratify= data['target']
+    )
+    
+    train_df= pandas.concat([X_train, y_train], axis=1).reset_index(drop=True)
+    train_df= oversample(train_df, seed)
+    test_df= pandas.concat([X_test, y_test], axis=1).reset_index(drop=True)
+    return train_df, test_df
