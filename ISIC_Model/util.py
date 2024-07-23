@@ -84,7 +84,7 @@ def train_evaluate_model(data:pandas.DataFrame, config: Dict[str, str], splits: 
     log_dir= os.path.join(os.path.dirname(__file__), config['logging']['log_dir'])
     img_dir= os.path.join(os.path.dirname(__file__), config['data']['image_dir'])
 
-    optimizer= AdamW(model.parameters(), lr= config['training']['lr'])
+    optimizer= AdamW(model.parameters(), lr= config['training']['lr'], weight_decay=config['training']['weight_decay'])
     scheduler = ReduceLROnPlateau(optimizer, mode='min', 
                                   factor=0.1, patience=patience)
     criterion= torch.nn.BCEWithLogitsLoss()
@@ -145,7 +145,7 @@ def train_evaluate_model(data:pandas.DataFrame, config: Dict[str, str], splits: 
 
                     train_loss+= loss.item()
 
-                    writer.add_scalar('Loss/train', loss.item(), ((fold)*epochs + epoch*train_steps + step))
+                    writer.add_scalar('Loss/train', loss.item(), (fold * epochs * train_steps + epoch * train_steps + step))
                     bar.set_postfix(loss= loss.item(), refresh=True)
                     bar.update(1)
 
@@ -183,7 +183,7 @@ def train_evaluate_model(data:pandas.DataFrame, config: Dict[str, str], splits: 
                         all_labels.append(labels.detach().cpu().numpy())
                         all_preds.append(probabilities.detach().cpu().numpy())
 
-                        writer.add_scalar('Loss/valid', loss.item(), ((fold+ 1)*epochs + epoch*valid_steps + step))
+                        writer.add_scalar('Loss/valid', loss.item(), fold * epochs * valid_steps + epoch * valid_steps+ step)
                         bar.set_postfix(loss= loss.item(), refresh=True)
                         bar.update(1)
 
