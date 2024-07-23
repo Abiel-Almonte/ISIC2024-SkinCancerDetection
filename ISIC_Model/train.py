@@ -1,7 +1,7 @@
 from util import ResUNetWithTabular, ResUNet, load_config,\
     set_seed, prepare, train_evaluate_test
 from sklearn.model_selection import StratifiedGroupKFold
-import warnings, pandas, os, torch, torch.cuda
+import warnings, pandas, os
 
 warnings.filterwarnings('ignore')
 config= load_config(os.path.join(os.path.dirname(__file__), 'config.yaml'))
