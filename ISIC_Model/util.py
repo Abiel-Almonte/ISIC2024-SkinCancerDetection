@@ -301,11 +301,11 @@ def oversample(data: pandas.DataFrame, seed: int):
 
     return pandas.concat([X, pandas.Series(y, name='target')], axis=1)
 
-def prepare(data: pandas.DataFrame, seed:int):
+def prepare(data: pandas.DataFrame, test_size:int, seed:int):
     X_train, X_test, y_train, y_test= train_test_split(
         data.drop(columns=['target']),
         data['target'], 
-        test_size=1059,
+        test_size=test_size,
         random_state=seed, 
         stratify= data['target']
     )
