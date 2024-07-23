@@ -1,11 +1,13 @@
 seed: 42
+
 model:
   name: 'ResUNetWithTabular'
-  cont_features: 32
+  cont_features: 31
   bin_features: 6
 
 testing:
   test: True
+  test_size: 1059
   batch_size: 10
   num_workers: 5
   ck: null
