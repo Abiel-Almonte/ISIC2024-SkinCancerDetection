@@ -1,108 +1,104 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torchvision.models as models
 
-class ResidualDecoderBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
+class DoubleConv(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int) -> None:
         super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, 3, padding=1)
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, 3, padding=1)
-        self.bn2 = nn.BatchNorm2d(out_channels)
-        self.relu = nn.ReLU(inplace=True)
-        self.conv_residual = nn.Conv2d(in_channels, out_channels, 1)
-        self.upsample = nn.ConvTranspose2d(out_channels, out_channels, 2, stride=2)
 
-    def forward(self, x):
-        residual = self.conv_residual(x)
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu(out)
-        out = self.conv2(out)
-        out = self.bn2(out)
-        out += residual
-        out = self.relu(out)
-        out = self.upsample(out)
-        return out
+        self.double_conv= nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size= 3, padding= 1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace= True),
+            nn.Conv2d(out_channels, out_channels, kernel_size= 3, padding= 1),
+            nn.BatchNorm2d(out_channels)
+        )
+
+    def forward(self, x:torch.Tensor)-> torch.Tensor:
+        return self.double_conv(x)
+        
+class ResidualDecoderBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, is_skip: bool= False)-> None:
+        super().__init__()
+        self.is_skip= is_skip
+        if is_skip:
+            self.upsample= nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+
+        self.channel_reduction= nn.Conv2d(in_channels, out_channels, kernel_size= 1)
+        self.double_conv= DoubleConv(in_channels, out_channels)
+        self.relu = nn.ReLU(inplace= True)
+        self.convT = nn.ConvTranspose2d(out_channels, out_channels, 2, stride= 2)
+
+    def forward(self, x: torch.Tensor, skip: torch.Tensor= None)-> torch.Tensor:
+        if self.is_skip:
+            x= x+ self.upsample(skip)
+        
+        res= self.channel_reduction(x)
+        x= self.double_conv(x)
+        x= self.relu(x + res)
+        return self.convT(x)
     
     
 class EfficientUNet(nn.Module):
-    def __init__(self, n_classes=32):
+    def __init__(self)-> None:
         super().__init__()
         
-        self.encoder = models.efficientnet_v2_s(weights=models.EfficientNet_V2_S_Weights.IMAGENET1K_V1)
-        self.encoder_layers = self.encoder.features
+        #EfficientNet encoder
+        self.encoder = models.efficientnet_v2_s(
+            weights=models.EfficientNet_V2_S_Weights.IMAGENET1K_V1
+        ).features
         
-        self.adjust_conv4 = nn.Conv2d(1280, 640, kernel_size=1)
-        self.adjust_conv3 = nn.Conv2d(160, 320, kernel_size=1)
-        self.adjust_conv2 = nn.Conv2d(64, 160, kernel_size=1)
-        
+        #U-Net like decoder with residual connection
         self.decoder1 = ResidualDecoderBlock(1280, 640)
-        self.decoder2 = ResidualDecoderBlock(640, 320)
-        self.decoder3 = ResidualDecoderBlock(320, 160)
-        self.decoder4 = ResidualDecoderBlock(160, 64)
+        self.decoder2 = ResidualDecoderBlock(640, 320, is_skip= True)
+        self.decoder3 = ResidualDecoderBlock(320, 160, is_skip= True)
+        self.decoder4 = ResidualDecoderBlock(160, 64, is_skip= True)
         
-        self.conv_last = nn.Conv2d(64, n_classes, 1)
-
-
-    def decoder_block(self, in_channels, out_channels):
-        return nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, 3, padding=1),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(out_channels, out_channels, 3, padding=1),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
-            nn.ConvTranspose2d(out_channels, out_channels, 2, stride=2),
+        #Channel Reductions, no feature extraction
+        self.adjust_enc4 = nn.Conv2d(1280, 640, kernel_size=1)
+        self.adjust_enc3 = nn.Conv2d(160, 320, kernel_size=1)
+        self.adjust_enc2 = nn.Conv2d(64, 160, kernel_size=1)
+        self.adjust_out= nn.Sequential(
+            nn.Conv2d(64, 32, kernel_size=1),
+            nn.AdaptiveAvgPool2d((1,1)),
+            nn.Flatten()
         )
 
+    def forward(self, x: torch.Tensor)-> torch.Tensor:
+        x= self.encoder[0:2](x)
+        enc2= self.encoder[2:4](x)
+        enc3= self.encoder[4:6](enc2)
+        enc4= self.encoder[6:8](enc3)
+        enc5= self.encoder[8:](enc4)
 
-    def forward(self, x):
-        # Encoder
-        conv1 = self.encoder_layers[0:2](x)
-        conv2 = self.encoder_layers[2:4](conv1)
-        conv3 = self.encoder_layers[4:6](conv2)
-        conv4 = self.encoder_layers[6:8](conv3)
-        conv5 = self.encoder_layers[8:](conv4)
-        # Decoder
-        up6 = self.decoder1(conv5)
-        conv4 = self.adjust_conv4(conv4)
-        conv4 = F.interpolate(conv4, size=up6.shape[2:], mode='bilinear', align_corners=True)
-        up7 = self.decoder2(up6 + conv4)
-        
-        conv3 = self.adjust_conv3(conv3)
-        conv3 = F.interpolate(conv3, size=up7.shape[2:], mode='bilinear', align_corners=True)
-        up8 = self.decoder3(up7 + conv3)
-        
-        conv2 = self.adjust_conv2(conv2)
-        conv2 = F.interpolate(conv2, size=up8.shape[2:], mode='bilinear', align_corners=True)
-        up9 = self.decoder4(up8 + conv2)
+        x= self.decoder1(enc5)
+        x= self.decoder2(x, self.adjust_enc4(enc4))
+        x= self.decoder3(x, self.adjust_enc3(enc3))
+        x= self.decoder4(x, self.adjust_enc2(enc2))
 
-        out = self.conv_last(up9)
-        
-        out = F.adaptive_avg_pool2d(out, (1, 1)).view(out.size(0), -1)
-        return out
+        return self.adjust_out(x)
+    
 class TabularNet(nn.Module):
-    def __init__(self, n_cont_features, n_bin_features):
+    def __init__(self, n_cont_features: int, n_bin_features:int):
         super().__init__()
         self.embed = nn.Embedding(n_bin_features, 64)
         self.proj= nn.Linear(n_cont_features, 64)
-        self.fc1 = nn.Linear(128, 128)
-        self.fc2 = nn.Linear(128, 64)
-        self.fc3 = nn.Linear(64, 32)
-        self.dropout = nn.Dropout(0.3)
-        self.bn1= nn.BatchNorm1d(128)
-        self.bn2= nn.BatchNorm1d(64)
+        self.ffn= nn.Sequential(
+            nn.Linear(128, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(inplace= True),
+            nn.Dropout(0.3),
+            nn.Linear(128, 64),
+            nn.BatchNorm1d(64),
+            nn.ReLU(inplace= True),
+            nn.Dropout(0.3),
+            nn.Linear(64, 32),
+            nn.ReLU(inplace= True)
+        )
 
-
-    def forward(self, cont, cat):
-        x = torch.cat([self.proj(cont), self.embed(cat).sum(1)], dim=1)
-        x = F.relu(self.bn1(self.fc1(x)))
-        x = self.dropout(x)
-        x = F.relu(self.bn2(self.fc2(x)))
-        x= self.dropout(x)
-        return F.relu(self.fc3(x))
+    def forward(self, cont: torch.Tensor, bin: torch.Tensor)-> torch.Tensor:
+        x = torch.cat([self.proj(cont), self.embed(bin).sum(1)], dim=1)
+        return self.ffn(x)
 
 
 class EfficientUNetWithTabular(nn.Module):
