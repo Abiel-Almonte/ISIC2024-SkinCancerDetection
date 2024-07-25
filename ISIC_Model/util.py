@@ -1,6 +1,6 @@
 import torch.utils
 import torch
-from arch import ResUNet, ResUNetWithTabular
+from arch import EfficientUNet, EfficientUNetWithTabular
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
@@ -24,14 +24,14 @@ TRAIN_TRANSFORM = transforms.Compose([
     transforms.RandomRotation(20),
     transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.1),
     transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
 ])
 
 TRANSFORM = transforms.Compose([
     transforms.Resize(480),
     transforms.CenterCrop(448),
     transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
 ])
 
 class SkinDataset(Dataset):
@@ -72,8 +72,8 @@ def partial_auc(labels, predictions, min_tpr: float=0.80):
     partial_auc_scaled = roc_auc_score(labels, predictions, max_fpr=max_fpr)
     return 0.5 * max_fpr**2 + (max_fpr - 0.5 * max_fpr**2) / (1.0 - 0.5) * (partial_auc_scaled - 0.5)
 
-def train_evaluate_model(data:pandas.DataFrame, config: Dict[str, str], splits: List[Any], model: Union[ResUNet, ResUNetWithTabular], **kwargs):
-    assert isinstance(model, (ResUNet, ResUNetWithTabular)), 'Model Not Supported'
+def train_evaluate_model(data:pandas.DataFrame, config: Dict[str, str], splits: List[Any], model: Union[EfficientUNet, EfficientUNetWithTabular], **kwargs):
+    assert isinstance(model, (EfficientUNet, EfficientUNetWithTabular)), 'Model Not Supported'
     
     model.to('cuda')
     model_name= config['model']['name']
@@ -99,36 +99,72 @@ def train_evaluate_model(data:pandas.DataFrame, config: Dict[str, str], splits: 
     writer= SummaryWriter(log_dir=os.path.join(os.path.join(log_dir, f'runs/{model_name}_run{num_runs}/')))
 
 
-    for fold, (train_idx, valid_idx) in enumerate(tqdm(splits, desc="Splits")):
-        print(f"Fold {fold + 1}")
+    train_data, valid_data= prepare(data, test_size=0.3, seed=config['seed'], _oversample=False)
 
-        train_data= data.iloc[train_idx].reset_index(drop=True)
-        valid_data= data.iloc[valid_idx].reset_index(drop=True)
+    train_dataset= SkinDataset(train_data, TRAIN_TRANSFORM, img_dir)
+    valid_dataset= SkinDataset(valid_data, TRANSFORM, img_dir)
 
-        train_dataset= SkinDataset(train_data, TRAIN_TRANSFORM, img_dir)
-        valid_dataset= SkinDataset(valid_data, TRANSFORM, img_dir)
+    train_loader= DataLoader(train_dataset, batch_size=config['training']['batch_size'], shuffle=True, num_workers=config['training']['num_workers'], pin_memory=True)
+    valid_loader= DataLoader(valid_dataset, batch_size=config['training']['batch_size'], shuffle=True, num_workers=config['training']['num_workers'], pin_memory=True)
 
-        train_loader= DataLoader(train_dataset, batch_size=config['training']['batch_size'], shuffle=True, num_workers=config['training']['num_workers'], pin_memory=True)
-        valid_loader= DataLoader(valid_dataset, batch_size=config['training']['batch_size'], shuffle=True, num_workers=config['training']['num_workers'], pin_memory=True)
+    best_val_loss = float('inf')
+    for epoch in tqdm(range(epochs), desc='Epochs'):
 
-        best_val_loss = float('inf')
-        for epoch in tqdm(range(epochs), desc='Epochs'):
+        model.train()
+        train_loss= 0.0
+        with  tqdm(total= train_steps, desc='Training Batches', leave=False) as bar:
+            for step, (images, tabular_cont, tabular_bin, labels) in enumerate(train_loader):
+                if step >= train_steps:
+                    break
 
-            model.train()
-            train_loss= 0.0
-            with  tqdm(total= train_steps, desc='Training Batches', leave=False) as bar:
-                for step, (images, tabular_cont, tabular_bin, labels) in enumerate(train_loader):
-                    if step >= train_steps:
+                optimizer.zero_grad()
+                if isinstance(model, EfficientUNet):
+                    images, labels= images.to('cuda'), labels.to('cuda').float()
+
+                    with autocast():
+                        outputs= model(images)
+                        loss= criterion(outputs.squeeze(dim= 1), labels)
+
+                elif isinstance(model, EfficientUNetWithTabular):
+                    tabular_cont, tabular_bin= tabular_cont.to('cuda'), tabular_bin.to('cuda')
+                    images, labels= images.to('cuda'), labels.to('cuda').float()
+
+                    with autocast():
+                        outputs= model(images, tabular_cont, tabular_bin)
+                        loss= criterion(outputs.squeeze(dim= 1), labels)
+
+                scaler.scale(loss).backward()
+                torch.nn.utils.clip_grad_norm(model.parameters() , 
+                    max_norm=config['training']['max_norm'], norm_type=config['training']['norm_type'])
+                scaler.step(optimizer)
+                scaler.update()
+
+                train_loss+= loss.item()
+
+                writer.add_scalar('Loss/train', loss.item(), (epoch * train_steps + step))
+                bar.set_postfix(loss= loss.item(), refresh=True)
+                bar.update(1)
+
+        train_loss= train_loss / train_steps
+        print(f' Epoch {epoch+1}/{epochs}, Loss: {train_loss:.4e}')
+
+        model.eval()
+        val_loss=0.0
+        all_labels, all_preds = [], []
+        with torch.inference_mode():
+            with tqdm(total= valid_steps, desc='Validation Batches', leave=False) as bar:
+                for step, (images, tabular_cont, tabular_bin, labels) in enumerate(valid_loader):
+                    if step >= valid_steps:
                         break
-
-                    if isinstance(model, ResUNet):
+                    
+                    if isinstance(model, EfficientUNet):
                         images, labels= images.to('cuda'), labels.to('cuda').float()
 
                         with autocast():
                             outputs= model(images)
                             loss= criterion(outputs.squeeze(dim= 1), labels)
 
-                    elif isinstance(model, ResUNetWithTabular):
+                    elif isinstance(model, EfficientUNetWithTabular):
                         tabular_cont, tabular_bin= tabular_cont.to('cuda'), tabular_bin.to('cuda')
                         images, labels= images.to('cuda'), labels.to('cuda').float()
 
@@ -136,68 +172,28 @@ def train_evaluate_model(data:pandas.DataFrame, config: Dict[str, str], splits: 
                             outputs= model(images, tabular_cont, tabular_bin)
                             loss= criterion(outputs.squeeze(dim= 1), labels)
 
-                    optimizer.zero_grad()
-                    scaler.scale(loss).backward()
-                    torch.nn.utils.clip_grad_norm(model.parameters() , 
-                        max_norm=config['training']['max_norm'], norm_type=config['training']['norm_type'])
-                    scaler.step(optimizer)
-                    scaler.update()
+                    probabilities = torch.sigmoid(outputs)
 
-                    train_loss+= loss.item()
+                    val_loss+= loss.item()
 
-                    writer.add_scalar('Loss/train', loss.item(), (fold * epochs * train_steps + epoch * train_steps + step))
+                    all_labels.append(labels.detach().cpu().numpy())
+                    all_preds.append(probabilities.detach().cpu().numpy())
+
+                    writer.add_scalar('Loss/valid', loss.item(), epoch * valid_steps+ step)
                     bar.set_postfix(loss= loss.item(), refresh=True)
                     bar.update(1)
 
-            train_loss= train_loss / train_steps
-            print(f' Epoch {epoch+1}/{epochs}, Loss: {train_loss:.4e}')
-    
-            model.eval()
-            val_loss=0.0
-            all_labels, all_preds = [], []
-            with torch.no_grad():
-                with tqdm(total= valid_steps, desc='Validation Batches', leave=False) as bar:
-                    for step, (images, tabular_cont, tabular_bin, labels) in enumerate(valid_loader):
-                        if step >= valid_steps:
-                            break
-                        
-                        if isinstance(model, ResUNet):
-                            images, labels= images.to('cuda'), labels.to('cuda').float()
+            val_loss = val_loss / valid_steps
 
-                            with autocast():
-                                outputs= model(images)
-                                loss= criterion(outputs.squeeze(dim= 1), labels)
-
-                        elif isinstance(model, ResUNetWithTabular):
-                            tabular_cont, tabular_bin= tabular_cont.to('cuda'), tabular_bin.to('cuda')
-                            images, labels= images.to('cuda'), labels.to('cuda').float()
-
-                            with autocast():
-                                outputs= model(images, tabular_cont, tabular_bin)
-                                loss= criterion(outputs.squeeze(dim= 1), labels)
-
-                        probabilities = torch.sigmoid(outputs)
-
-                        val_loss+= loss.item()
-
-                        all_labels.append(labels.detach().cpu().numpy())
-                        all_preds.append(probabilities.detach().cpu().numpy())
-
-                        writer.add_scalar('Loss/valid', loss.item(), fold * epochs * valid_steps + epoch * valid_steps+ step)
-                        bar.set_postfix(loss= loss.item(), refresh=True)
-                        bar.update(1)
-
-                val_loss = val_loss / valid_steps
-
-                all_labels = numpy.concatenate(all_labels)
-                all_preds = numpy.concatenate(all_preds)
-                unique_labels = numpy.unique(all_labels)
-                
-                if len(unique_labels) < 2:
-                    print(f' Warning: Only one class present in labels. Unique labels: {unique_labels}')
-                else: p_auc= partial_auc(all_labels, all_preds)
-                
-                writer.add_scalar('Partial AUC/valid', p_auc, fold*epochs + epoch)
+            all_labels = numpy.concatenate(all_labels)
+            all_preds = numpy.concatenate(all_preds)
+            unique_labels = numpy.unique(all_labels)
+            
+            if len(unique_labels) < 2:
+                print(f' Warning: Only one class present in labels. Unique labels: {unique_labels}')
+            else: p_auc= partial_auc(all_labels, all_preds)
+            
+            writer.add_scalar('Partial AUC/valid', p_auc, epoch)
 
             scheduler.step(val_loss)
             torch.cuda.empty_cache()
@@ -207,21 +203,27 @@ def train_evaluate_model(data:pandas.DataFrame, config: Dict[str, str], splits: 
                 best_val_loss = val_loss
                 patience = 0
 
-                torch.save(model.state_dict(), os.path.join(log_dir, f'checkpoints/{checkpoint_name}/{model_name}_fold_{fold+1}.pt'))
-                print(f' Saved best model for fold {fold + 1} with validation loss: {val_loss:.4e}')
+                torch.save(model.state_dict(), os.path.join(log_dir, f'checkpoints/{checkpoint_name}/{model_name}_epoch_{epoch}.pt'))
+                print(f' Saved best model with validation loss: {val_loss:.4e}')
 
             else:
                 patience += 1
                 if patience >= 10:
-                    print(f' Early stopping triggered after {fold*epochs + epoch + 1} total epochs')
+                    print(f' Early stopping triggered after { epoch + 1} total epochs')
                     break
 
     torch.save(model.state_dict(), os.path.join(log_dir, f'checkpoints/{checkpoint_name}/{model_name}_final.pt'))
     return checkpoint_name, num_runs
 
-def test_model(data:pandas.DataFrame, config: Dict[str, str],  model: Union[ResUNet, ResUNetWithTabular], **kwargs)-> Any:
+def test_model(data:pandas.DataFrame, config: Dict[str, str],  model: Union[EfficientUNet, EfficientUNetWithTabular], **kwargs)-> Any:
     img_dir= os.path.join(os.path.dirname(__file__), config['data']['image_dir'])
     log_dir= os.path.join(os.path.dirname(__file__), config['logging']['log_dir'])
+
+    unique_labels = numpy.unique(data['target'].values)
+    if len(unique_labels) < 2:
+        print(f' Warning: Only one class present in labels. Unique labels: {unique_labels}')
+        return None
+    print(data['target'].value_counts())
 
     test_dataset= SkinDataset(data, TRANSFORM, img_dir)
     test_loader= DataLoader(test_dataset, batch_size=config['testing']['batch_size'], shuffle=False, num_workers=config['testing']['num_workers'])
@@ -230,37 +232,33 @@ def test_model(data:pandas.DataFrame, config: Dict[str, str],  model: Union[ResU
     ck_fp= os.path.join(log_dir, f"checkpoints/{config['testing']['ck']}/{config['model']['name']}_final.pt")
     run_fp_for_metric= os.path.join(log_dir, f"runs/{config['model']['name']}_run{config['testing']['run']}/metric.json")
 
+
     state_dict= torch.load(ck_fp)
     model.load_state_dict(state_dict)
     model.to('cuda').eval()
+    with torch.inference_mode():
+        for images, tabular_cont, tabular_bin, labels in tqdm(test_loader,  desc='Test Batches', leave=False):
+            if isinstance(model, EfficientUNet):
+                images, labels= images.to('cuda'), labels.to('cuda').float()
+                outputs= model(images)
+                            
+            elif isinstance(model, EfficientUNetWithTabular):
+                tabular_cont, tabular_bin= tabular_cont.to('cuda'), tabular_bin.to('cuda')
+                images, labels= images.to('cuda'), labels.to('cuda').float()
+                outputs= model(images, tabular_cont, tabular_bin)
 
-    for images, tabular_cont, tabular_bin, labels in tqdm(test_loader,  desc='Test Batches', leave=False):
-        if isinstance(model, ResUNet):
-            images, labels= images.to('cuda'), labels.to('cuda').float()
-            outputs= model(images)
-                        
-        elif isinstance(model, ResUNetWithTabular):
-            tabular_cont, tabular_bin= tabular_cont.to('cuda'), tabular_bin.to('cuda')
-            images, labels= images.to('cuda'), labels.to('cuda').float()
-            outputs= model(images, tabular_cont, tabular_bin)
-
-        probabilities= torch.sigmoid(outputs).detach().cpu()
-        all_labels.append(labels.detach().cpu())
-        all_preds.append(probabilities)
+            probabilities= torch.sigmoid(outputs)
+            all_labels.append(labels.detach().cpu().numpy())
+            all_preds.append(probabilities.detach().cpu().numpy())
 
     all_labels= numpy.concatenate(all_labels)
     all_preds= numpy.concatenate(all_preds)
     unique_labels = numpy.unique(all_labels)
 
-    if len(unique_labels) < 2:
-        print(f' Warning: Only one class present in labels. Unique labels: {unique_labels}')
-    else:
-        pAUC= partial_auc(all_labels, all_preds)
-        with open(run_fp_for_metric, 'w') as file:
-            json.dump({'Partial AUC': round(pAUC, 3)}, file)
-        return pAUC
-    
-    return None
+    pAUC= partial_auc(all_labels, all_preds)
+    with open(run_fp_for_metric, 'w') as file:
+        json.dump({'Partial AUC': round(pAUC, 3)}, file)
+    return pAUC
 
 def train_evaluate_test(train_evaluate_args: Dict[Any, Any], test_args: Dict[Any, Any]):
     ck, run= wrap_cuda_streamer(train_evaluate_model, train_evaluate_args)
@@ -301,7 +299,7 @@ def oversample(data: pandas.DataFrame, seed: int):
 
     return pandas.concat([X, pandas.Series(y, name='target')], axis=1)
 
-def prepare(data: pandas.DataFrame, test_size:int, seed:int):
+def prepare(data: pandas.DataFrame, test_size:int, seed:int, _oversample:bool= True):
     X_train, X_test, y_train, y_test= train_test_split(
         data.drop(columns=['target']),
         data['target'], 
@@ -311,6 +309,7 @@ def prepare(data: pandas.DataFrame, test_size:int, seed:int):
     )
     
     train_df= pandas.concat([X_train, y_train], axis=1).reset_index(drop=True)
-    train_df= oversample(train_df, seed)
+    if _oversample:
+        train_df= oversample(train_df, seed)
     test_df= pandas.concat([X_test, y_test], axis=1).reset_index(drop=True)
     return train_df, test_df
