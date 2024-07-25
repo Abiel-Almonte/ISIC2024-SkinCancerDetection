@@ -3,6 +3,30 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
 
+class ResidualDecoderBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, 3, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, 3, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv_residual = nn.Conv2d(in_channels, out_channels, 1)
+        self.upsample = nn.ConvTranspose2d(out_channels, out_channels, 2, stride=2)
+
+    def forward(self, x):
+        residual = self.conv_residual(x)
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out += residual
+        out = self.relu(out)
+        out = self.upsample(out)
+        return out
+    
+    
 class EfficientUNet(nn.Module):
     def __init__(self, n_classes=32):
         super().__init__()
@@ -14,11 +38,11 @@ class EfficientUNet(nn.Module):
         self.adjust_conv3 = nn.Conv2d(160, 320, kernel_size=1)
         self.adjust_conv2 = nn.Conv2d(64, 160, kernel_size=1)
         
-        self.decoder1 = self.decoder_block(1280, 640)
-        self.decoder2 = self.decoder_block(640, 320)
-        self.decoder3 = self.decoder_block(320, 160)
-        self.decoder4 = self.decoder_block(160, 64)
-            
+        self.decoder1 = ResidualDecoderBlock(1280, 640)
+        self.decoder2 = ResidualDecoderBlock(640, 320)
+        self.decoder3 = ResidualDecoderBlock(320, 160)
+        self.decoder4 = ResidualDecoderBlock(160, 64)
+        
         self.conv_last = nn.Conv2d(64, n_classes, 1)
 
 
@@ -45,24 +69,20 @@ class EfficientUNet(nn.Module):
         up6 = self.decoder1(conv5)
         conv4 = self.adjust_conv4(conv4)
         conv4 = F.interpolate(conv4, size=up6.shape[2:], mode='bilinear', align_corners=True)
-        up6= self.attention1(up6, conv4)
         up7 = self.decoder2(up6 + conv4)
         
         conv3 = self.adjust_conv3(conv3)
         conv3 = F.interpolate(conv3, size=up7.shape[2:], mode='bilinear', align_corners=True)
-        up7= self.attention2(up7, conv4)
         up8 = self.decoder3(up7 + conv3)
         
         conv2 = self.adjust_conv2(conv2)
         conv2 = F.interpolate(conv2, size=up8.shape[2:], mode='bilinear', align_corners=True)
         up9 = self.decoder4(up8 + conv2)
 
-
         out = self.conv_last(up9)
         
         out = F.adaptive_avg_pool2d(out, (1, 1)).view(out.size(0), -1)
         return out
-    
 class TabularNet(nn.Module):
     def __init__(self, n_cont_features, n_bin_features):
         super().__init__()
