@@ -62,14 +62,14 @@ class SkinDataset(Dataset):
         return image_tensor, tabular_cont, tabular_bin, label
 
 def partial_auc(labels, predictions, min_tpr: float=0.80):
-    labels = numpy.asarray(labels)
-    predictions = numpy.asarray(predictions)
+    labels= numpy.asarray(labels)
+    predictions= numpy.asarray(predictions)
 
-    labels = numpy.abs(labels - 1)
-    predictions = 1.0 - predictions
+    labels= numpy.abs(labels - 1)
+    predictions= 1.0 - predictions
 
-    max_fpr = 1-min_tpr
-    partial_auc_scaled = roc_auc_score(labels, predictions, max_fpr=max_fpr)
+    max_fpr= 1-min_tpr
+    partial_auc_scaled= roc_auc_score(labels, predictions, max_fpr=max_fpr)
     return 0.5 * max_fpr**2 + (max_fpr - 0.5 * max_fpr**2) / (1.0 - 0.5) * (partial_auc_scaled - 0.5)
 
 def train_evaluate_model(data:pandas.DataFrame, config: Dict[str, str], splits: List[Any], model: Union[EfficientUNet, EfficientUNetWithTabular], **kwargs):
@@ -114,7 +114,7 @@ def train_evaluate_model(data:pandas.DataFrame, config: Dict[str, str], splits: 
         train_loss= 0.0
         with  tqdm(total= train_steps, desc='Training Batches', leave=False) as bar:
             for step, (images, tabular_cont, tabular_bin, labels) in enumerate(train_loader):
-                if step >= train_steps:
+                if step>= train_steps:
                     break
 
                 optimizer.zero_grad()
@@ -134,8 +134,8 @@ def train_evaluate_model(data:pandas.DataFrame, config: Dict[str, str], splits: 
                         loss= criterion(outputs.squeeze(dim= 1), labels)
 
                 scaler.scale(loss).backward()
-                torch.nn.utils.clip_grad_norm(model.parameters() , 
-                    max_norm=config['training']['max_norm'], norm_type=config['training']['norm_type'])
+               #torch.nn.utils.clip_grad_norm(model.parameters() , 
+                    #max_norm=config['training']['max_norm'], norm_type=config['training']['norm_type'])
                 scaler.step(optimizer)
                 scaler.update()
 
@@ -154,7 +154,7 @@ def train_evaluate_model(data:pandas.DataFrame, config: Dict[str, str], splits: 
         with torch.inference_mode():
             with tqdm(total= valid_steps, desc='Validation Batches', leave=False) as bar:
                 for step, (images, tabular_cont, tabular_bin, labels) in enumerate(valid_loader):
-                    if step >= valid_steps:
+                    if step>= valid_steps:
                         break
                     
                     if isinstance(model, EfficientUNet):
@@ -183,13 +183,13 @@ def train_evaluate_model(data:pandas.DataFrame, config: Dict[str, str], splits: 
                     bar.set_postfix(loss= loss.item(), refresh=True)
                     bar.update(1)
 
-            val_loss = val_loss / valid_steps
+            val_loss= val_loss/ valid_steps
 
-            all_labels = numpy.concatenate(all_labels)
-            all_preds = numpy.concatenate(all_preds)
-            unique_labels = numpy.unique(all_labels)
+            all_labels= numpy.concatenate(all_labels)
+            all_preds= numpy.concatenate(all_preds)
+            unique_labels= numpy.unique(all_labels)
             
-            if len(unique_labels) < 2:
+            if len(unique_labels)< 2:
                 print(f' Warning: Only one class present in labels. Unique labels: {unique_labels}')
             else: p_auc= partial_auc(all_labels, all_preds)
             
@@ -207,8 +207,8 @@ def train_evaluate_model(data:pandas.DataFrame, config: Dict[str, str], splits: 
                 print(f' Saved best model with validation loss: {val_loss:.4e}')
 
             else:
-                patience += 1
-                if patience >= 10:
+                patience+= 1
+                if patience>= 10:
                     print(f' Early stopping triggered after { epoch + 1} total epochs')
                     break
 
@@ -257,7 +257,7 @@ def test_model(data:pandas.DataFrame, config: Dict[str, str],  model: Union[Effi
 
     pAUC= partial_auc(all_labels, all_preds)
     with open(run_fp_for_metric, 'w') as file:
-        json.dump({'Partial AUC': round(pAUC, 3)}, file)
+        json.dump({'Partial AUC': round(pAUC, 3), 'Testing Samples': len(data)}, file)
     return pAUC
 
 def train_evaluate_test(train_evaluate_args: Dict[Any, Any], test_args: Dict[Any, Any]):
@@ -287,8 +287,8 @@ def set_seed(seed: int= 42):
     numpy.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic= True
+    torch.backends.cudnn.benchmark= False
 
 def oversample(data: pandas.DataFrame, seed: int):
     ros= RandomOverSampler(random_state=seed)
