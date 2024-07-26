@@ -107,6 +107,9 @@ class TabularNet(nn.Module):
         super().__init__()
         self.embed = nn.Embedding(n_bin_features, 64)
         self.proj= nn.Linear(n_cont_features, 64)
+        self.attention= nn.MultiheadAttention(
+            embed_dim=128, num_heads=4
+        )
         self.ffn= nn.Sequential(
             nn.Linear(128, 128),
             nn.BatchNorm1d(128),
@@ -121,8 +124,10 @@ class TabularNet(nn.Module):
         )
 
     def forward(self, cont: torch.Tensor, bin: torch.Tensor)-> torch.Tensor:
-        x = torch.cat([self.proj(cont), self.embed(bin).sum(1)], dim=1)
-        return self.ffn(x)
+        x= torch.cat([self.proj(cont), self.embed(bin).sum(1)], dim=1)
+        x= x.unsqueeze(0)
+        x, _= self.attention(x, x, x) 
+        return self.ffn(x.squeeze(0))
 
 
 class EfficientUNetWithTabular(nn.Module):
