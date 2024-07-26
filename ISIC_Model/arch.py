@@ -16,12 +16,24 @@ class DoubleConv(nn.Module):
 
     def forward(self, x:torch.Tensor)-> torch.Tensor:
         return self.double_conv(x)
+
+class SpatialAttention(nn.Module):
+    def __init__(self, in_channels)-> None:
+        super().__init__()
+        #Create attention map and obtain scores
+        self.attention= nn.Sequential(
+            nn.Conv2d(in_channels, 1, kernel_size= 1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x:torch.Tensor)-> torch.Tensor:
+        return x* self.attention(x)
         
 class ResidualDecoderBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, is_skip: bool= False)-> None:
+    def __init__(self, in_channels, out_channels, use_skip: bool= False)-> None:
         super().__init__()
-        self.is_skip= is_skip
-        if is_skip:
+        self.use_skip= use_skip
+        if use_skip:
             self.upsample= nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
 
         self.channel_reduction= nn.Conv2d(in_channels, out_channels, kernel_size= 1)
@@ -30,14 +42,13 @@ class ResidualDecoderBlock(nn.Module):
         self.convT = nn.ConvTranspose2d(out_channels, out_channels, 2, stride= 2)
 
     def forward(self, x: torch.Tensor, skip: torch.Tensor= None)-> torch.Tensor:
-        if self.is_skip:
+        if self.use_skip:
             x= x+ self.upsample(skip)
         
         res= self.channel_reduction(x)
         x= self.double_conv(x)
         x= self.relu(x + res)
         return self.convT(x)
-    
     
 class EfficientUNet(nn.Module):
     def __init__(self)-> None:
@@ -50,9 +61,15 @@ class EfficientUNet(nn.Module):
         
         #U-Net like decoder with residual connection
         self.decoder1 = ResidualDecoderBlock(1280, 640)
-        self.decoder2 = ResidualDecoderBlock(640, 320, is_skip= True)
-        self.decoder3 = ResidualDecoderBlock(320, 160, is_skip= True)
-        self.decoder4 = ResidualDecoderBlock(160, 64, is_skip= True)
+        self.decoder2 = ResidualDecoderBlock(640, 320, use_skip= True)
+        self.decoder3 = ResidualDecoderBlock(320, 160, use_skip= True)
+        self.decoder4 = ResidualDecoderBlock(160, 64, use_skip= True)
+
+        #Spatial Attention, enhancing the most important regions
+        self.attention1= SpatialAttention(640)
+        self.attention2= SpatialAttention(320)
+        self.attention3= SpatialAttention(160)
+        self.attention4= SpatialAttention(64)
         
         #Channel Reductions, no feature extraction
         self.adjust_enc4 = nn.Conv2d(1280, 640, kernel_size=1)
@@ -72,9 +89,16 @@ class EfficientUNet(nn.Module):
         enc5= self.encoder[8:](enc4)
 
         x= self.decoder1(enc5)
+        x= self.attention1(x)
+
         x= self.decoder2(x, self.adjust_enc4(enc4))
+        x= self.attention2(x)
+
         x= self.decoder3(x, self.adjust_enc3(enc3))
+        x=self.attention3(x)
+
         x= self.decoder4(x, self.adjust_enc2(enc2))
+        x=self.attention4(x)
 
         return self.adjust_out(x)
     
