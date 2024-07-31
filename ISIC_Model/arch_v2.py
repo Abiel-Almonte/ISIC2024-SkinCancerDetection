@@ -90,6 +90,11 @@ class TabularNet(nn.Module):
         self.embed= nn.Embedding(n_bin_features, 64)
         self.mha= nn.MultiheadAttention(128, 4)
         self.ffn= nn.Sequential(
+                nn.Linear(128, 256),
+                nn.BatchNorm1d(256),
+                nn.ReLU(inplace=True),
+                nn.Dropout(0.3),
+                nn.Linear(256, 128),
                 nn.BatchNorm1d(128),
                 nn.ReLU(inplace=True),
                 nn.Dropout(0.3),
@@ -107,11 +112,29 @@ class TabularNet(nn.Module):
         x, _= self.mha(x, x, x)
         return self.ffn(x.squeeze(0))
 
+class FeatureFusion(nn.Module):
+    def __init__(self, img_features, tab_features):
+        super().__init__()
+        self.attention = nn.MultiheadAttention(img_features + tab_features, 4)
+        self.norm = nn.LayerNorm(img_features + tab_features)
+        self.ffn = nn.Sequential(
+            nn.Linear(img_features + tab_features, 128),
+            nn.ReLU(),
+            nn.Linear(128, 64)
+        )
+
+    def forward(self, img_feat, tab_feat):
+        combined = torch.cat([img_feat, tab_feat], dim=1).unsqueeze(0)
+        attn_out, _ = self.attention(combined, combined, combined)
+        norm_out = self.norm(attn_out + combined)
+        return self.ffn(norm_out.squeeze(0))
+
 class EfficientUNetWithTabular_v2(nn.Module):
     def __init__(self, n_cont_features:int , n_bin_features:int) -> None:
         super().__init__()
         self.unet= EfficientUNet_v2()
         self.tabnet= TabularNet(n_cont_features, n_bin_features)
+        self.fusion = FeatureFusion(32, 32)
         self.ffn= nn.Sequential(
             nn.BatchNorm1d(64),
             nn.Linear(64,1))
@@ -119,8 +142,8 @@ class EfficientUNetWithTabular_v2(nn.Module):
     def forward(self, image:torch.Tensor, continous:torch.Tensor, binary:torch.Tensor)-> torch.Tensor:
         image_features= self.unet(image)
         tabular_features= self.tabnet(continous, binary)
-        x= torch.cat([image_features, tabular_features], dim=1)
-        return self.ffn(x)
+        fused_features = self.fusion(image_features, tabular_features)
+        return self.ffn(fused_features)
     
 if '__main__' == __name__:
     from torchsummary import summary
