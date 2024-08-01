@@ -10,6 +10,7 @@ class SelfAttention(nn.Module):
         self.key= nn.Conv2d(in_channels, in_channels// 8, kernel_size= 1)
         self.value= nn.Conv2d(in_channels, in_channels, kernel_size= 1)
         self.gamma= nn.Parameter(torch.zeros(1))
+        self.scale = (in_channels // 8) ** -0.5
 
     def forward(self, x:torch.Tensor)-> torch.Tensor:
         _, _, h, w= x.shape
@@ -17,9 +18,8 @@ class SelfAttention(nn.Module):
         k= einops.rearrange(self.key(x), 'b c h w -> b c (h w)')
         v= einops.rearrange(self.value(x), 'b c h w -> b c (h w)')
 
-        attn= F.softmax(torch.bmm(q, k), dim=-1)
-        attn= einops.rearrange(attn, 'b hw1 hw2 -> b hw2 hw1')
-        out= einops.rearrange(torch.bmm(v, attn), 'b c (h w) -> b c h w', h= h, w= w)
+        attn= F.softmax(torch.bmm(q, k) * self.scale, dim=-1)
+        out= einops.rearrange(torch.bmm(v, attn.permute(0,2,1)), 'b c (h w) -> b c h w', h= h, w= w)
         return self.gamma* out+ x
     
 class FPNBlock(nn.Module):
@@ -29,7 +29,6 @@ class FPNBlock(nn.Module):
         self.conv= nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
 
     def forward(self, x:torch.Tensor, skip: torch.Tensor= None)-> torch.Tensor:
-        #skip= self.adjust(x)
         if skip is not None:
             if x.shape != skip.shape:
                 x= self.adjust(x)
@@ -79,7 +78,7 @@ class EfficientUNet_v2(nn.Module):
         x= self.dropout(x)
 
         for i, layer in enumerate(self.decoder):
-            x= layer(x, skips[len(self.decoder)- 1- i])
+            x= layer(x, skips[-(i+1)])
 
         return self.adjust_out(x)
 
