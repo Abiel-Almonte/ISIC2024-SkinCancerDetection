@@ -1,29 +1,30 @@
 import torch
 import torch.nn as nn
+from .blocks import CrossModalAttention
+from .base import ISICModel
 from torchvision.models import vit_b_16
-from blocks import CrossModalAttention
-from base import ModelProtocol
 
 __all__= ['CrossModalTransformer']
 
-class CrossModalTransformer(nn.Module, ModelProtocol):
-    def __init__(self, cont_features: int= 31, bin_features: int= 6, dim: int= 768, depth: int= 4, mlp_dim: int= 3072):
+class CrossModalTransformer(nn.Module, ISICModel):
+    def __init__(self, cont_features: int= 31, bin_features: int= 6, image_size:int= 224, dim: int= 768, depth: int= 4, mlp_dim: int= 3072):
         """
         Initialize the CrossModalTransformer model.
 
         Args:
             cont_features (int): Number of continuous features.
             bin_features (int): Number of binary features.
+            image_size (int): Resolution of input image.
             dim (int): Dimension of the transformer model.
             depth (int): Number of transformer layers.
             mlp_dim (int): Dimension of the feed-forward network in the transformer.
         """
         super().__init__()
-        self.vit = vit_b_16() #-> 768
+        self.vit = vit_b_16(image_size= image_size)
         self.vit.heads = nn.Identity()
-        self.vit_out= nn.Linear(self.vit.hidden_dim, 384)
-        self.cont_embed = nn.Linear(cont_features, 192)
-        self.bin_embed= nn.Embedding(bin_features, 192)
+        self.vit_out= nn.Linear(self.vit.hidden_dim, dim//2)
+        self.cont_embed = nn.Linear(cont_features, dim//4)
+        self.bin_embed= nn.Embedding(bin_features, dim//4)
         
         self.transformer = nn.ModuleList([
             nn.ModuleList([
@@ -42,10 +43,10 @@ class CrossModalTransformer(nn.Module, ModelProtocol):
         )
 
     def forward(self, image:torch.Tensor, continous:torch.Tensor, binary:torch.Tensor):
-        img= self.vit(image)
-        img= self.vit_out(image)
-        tab= torch.cat([self.cont_embed(continous), self.bin_embed(binary).sum(1)], dim=1)
-        x = torch.cat([img, tab], dim=1)
+        image= self.vit(image)
+        image= self.vit_out(image)
+        tabular= torch.cat([self.cont_embed(continous), self.bin_embed(binary).sum(1)], dim=1)
+        x = torch.cat([image, tabular], dim=1)
         for attn, norm1, ff1, gelu, ff2, norm2 in self.transformer:
             attn_out = attn(x, x)
             x = norm1(x + attn_out)
