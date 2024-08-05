@@ -28,7 +28,7 @@ testing:
   
 data:
   image_dir: '../../data/train-image/image'
-  metadata_file: '../../data/ppcMetadata.csv'
+  metadata_file: '../data/ppcMetadata.csv'
 
 logging:
   log_dir: '../logs'
