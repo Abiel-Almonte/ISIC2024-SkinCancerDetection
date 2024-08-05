@@ -1,12 +1,12 @@
 import torch
 import torch.nn as nn
-from models import TabNet, EfficientUNet, EfficientUNet_v2, ViTUNet
-from blocks import FeatureFusion
-from base import ModelProtocol
+from .models import TabNet, EfficientUNet, EfficientUNet_v2, ViTUNet
+from .blocks import FeatureFusion
+from .base import ISICModel
 
 __all__= ['EfficientUNetWithTabular', 'EfficientUNetWithTabular_v2', 'ViTWithTabular']
 
-class EfficientUNetWithTabular(nn.Module, ModelProtocol):
+class EfficientUNetWithTabular(nn.Module, ISICModel):
     def __init__(self, n_cont_features:int= 31, n_bin_features: int= 6):
         """
         Initialize the EfficientUNetWithTabular model.
@@ -28,7 +28,7 @@ class EfficientUNetWithTabular(nn.Module, ModelProtocol):
         combined = torch.cat([img_features, tab_features], dim=1)
         return self.fc(combined)
 
-class EfficientUNetWithTabular_v2(nn.Module,  ModelProtocol):
+class EfficientUNetWithTabular_v2(nn.Module,  ISICModel):
     def __init__(self, n_cont_features:int , n_bin_features:int) -> None:
         """
         Initialize the EfficientUNetWithTabular_v2 model.
@@ -52,7 +52,7 @@ class EfficientUNetWithTabular_v2(nn.Module,  ModelProtocol):
         return self.ffn(fused_features)
 
 
-class ViTWithTabular(nn.Module, ModelProtocol):
+class ViTWithTabular(nn.Module, ISICModel):
     def __init__(self, n_cont_features: int, n_bin_features: int) -> None:
         """
         Initialize the ViTWithTabular_v2 model.

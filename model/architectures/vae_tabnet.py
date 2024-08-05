@@ -1,12 +1,12 @@
 import torch
 import torch.nn as nn
-from models import VAE, TabNet
+from .models import VAE, TabNet
+from .base import ISICModel
 from typing import Tuple
-from base import ModelProtocol
 
 __all__= ['VAETabNet']
 
-class VAETabNet(nn.Module, ModelProtocol):
+class VAETabNet(nn.Module, ISICModel):
     def __init__(self, cont_features:int= 31, bin_features: int= 6, latent_dim: int= 256) -> None:
         super().__init__()
         self.tabnet= TabNet(cont_features, bin_features)

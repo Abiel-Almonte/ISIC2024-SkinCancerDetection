@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
+from ..blocks import ResidualDecoderBlock, FPNBlock, TransposedConvBlock, SelfAttention, CBAM
 from torchvision import models
-from blocks import ResidualDecoderBlock, FPNBlock, TransposedConvBlock, SelfAttention, CBAM
 from transformers import ViTModel, ViTConfig
 
 __all__= ['EfficientUNet', 'EfficientUNet_v2', 'ViTUNet' ]

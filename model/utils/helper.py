@@ -3,8 +3,8 @@ import random
 import numpy
 import torch
 import yaml
+from .pipeline import train_evaluate_model, test_model
 from typing import Callable, Any, Dict
-from pipeline import train_evaluate_model, test_model
 
 __all__= ['train_evaluate_test', 'cuda_stream_wrapper', 'load_config', 'set_seed']
 
