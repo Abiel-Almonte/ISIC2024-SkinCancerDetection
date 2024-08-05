@@ -19,21 +19,21 @@ metadata= pandas.read_csv(os.path.join(
 ).drop(columns= ['Unnamed: 0']) #duplicate index
 
 metadata, test_data= prepare(metadata, config['testing']['test_size'], config['seed'], use_oversample=False)
-train_data, valid_data= prepare(metadata, test_size=0.3, seed=config['seed'], use_oversample= True)
+train_data, valid_data= prepare(metadata, test_size=0.3, seed=config['seed'], use_oversample= False)
 
 
 
 model_name = config['model']['name']
 try:
     ModelClass, args= get_model(model_name)
-    model_kwargs= {k: config['model'].get(k) for k in args.keys()}
+    model_kwargs= {k: v for k, v in config['model']['parameters'].items() if k in args and v is not None}
     model= model = ModelClass(**model_kwargs)
 except ValueError as e:
     raise ValueError(f"Unsupported model: {model_name}") from e
 
     
 train_evaluate_args = {'train_data': train_data, 'valid_data': valid_data, 'config': config, 'model': model}
-test_args = {'data': test_data, 'config': config, 'model': model} if config['testing']['test'] else None
+test_args = {'data': test_data, 'config': config, 'model': model} if config['testing']['enabled'] else None
 
 
 
