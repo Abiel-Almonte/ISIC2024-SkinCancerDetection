@@ -84,7 +84,7 @@ def oversample(data: pandas.DataFrame, seed: int) -> pandas.DataFrame:
 
     return pandas.concat([X_resampled, pandas.Series(y_resampled, name='target')], axis=1)
 
-def prepare(data: pandas.DataFrame, test_size: int, seed: int, use_oversample: bool = True) -> Tuple[pandas.DataFrame, pandas.DataFrame]:
+def prepare(data: pandas.DataFrame, test_size: int | float , seed: int, use_oversample: bool = True) -> Tuple[pandas.DataFrame, pandas.DataFrame]:
     """
     Prepares the dataset by splitting it into training and testing sets, and optionally oversampling the training set.
 
@@ -105,9 +105,9 @@ def prepare(data: pandas.DataFrame, test_size: int, seed: int, use_oversample: b
         stratify=data['target']
     )
     
-    train_df = pandas.concat([X_train, y_train.reset_index(drop=True)], axis=1)
+    train_df = pandas.concat([X_train, y_train], axis=1).reset_index(drop=True)
     if use_oversample:
         train_df = oversample(train_df, seed)
-    test_df = pandas.concat([X_test, y_test.reset_index(drop=True)], axis=1)
+    test_df = pandas.concat([X_test, y_test], axis=1).reset_index(drop=True)
     
     return train_df, test_df
