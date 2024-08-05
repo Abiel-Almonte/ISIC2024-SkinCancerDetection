@@ -1,30 +1,29 @@
 seed: 42
+test_only: False
 
 model:
-  name: 'ResUNetWithTabular'
-  cont_features: 31
-  bin_features: 6
+  name: 'EfficientUNetWithTabular'
+  parameters:
+    cont_features: 31
+    bin_features: 6
 
 testing:
-  test: True
-  test_size: 1059
+  enabled: True
+  test_size: 100159
   batch_size: 10
-  num_workers: 5
-  ck: null
-  run: null
+  num_workers: 20
+  run: 31
 
 training:
-  lr: 0.005
+  lr: 0.0001
   weight_decay: 0.01
-  batch_size: 32
+  batch_size: 16
   num_workers: 20
   epochs: 50
   train_steps: 500
-  valid_steps: 250
+  valid_steps: 500
   patience: 5
-  max_norm: 1
-  norm_type: 1
-
+  
 data:
   image_dir: '../data/train-image/image'
   metadata_file: '../data/ppcMetadata.csv'
