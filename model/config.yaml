@@ -11,9 +11,9 @@ model:
 testing:
   enabled: True
   test_size: 100159
-  batch_size: 10
+  batch_size: 16
   num_workers: 20
-  run: 31
+  run: 0
 
 training:
   loss_fn: 'BCE'
