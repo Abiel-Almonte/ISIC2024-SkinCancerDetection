@@ -2,18 +2,11 @@ seed: 42
 test_only: False
 
 model:
-  name: 'CrossModalTransformer'
+  name: 'VAETabNet'
   parameters:
     cont_features: 31
     bin_features: 6
     image_size: 448
-
-testing:
-  enabled: True
-  test_size: 100159
-  batch_size: 16
-  num_workers: 20
-  run: 0
 
 training:
   loss_fn: 'BCE'
@@ -25,10 +18,17 @@ training:
   train_steps: 500
   valid_steps: 500
   patience: 5
+
+testing:
+  enabled: True
+  test_size: 100159
+  batch_size: 16
+  num_workers: 20
+  run: 0
   
 data:
-  image_dir: '../data/train-image/image'
-  metadata_file: '../data/ppcMetadata.csv'
+  image_dir: '../../data/train-image/image'
+  metadata_file: '../../data/ppcMetadata.csv'
 
 logging:
-  log_dir: 'logs'
+  log_dir: '../logs'
