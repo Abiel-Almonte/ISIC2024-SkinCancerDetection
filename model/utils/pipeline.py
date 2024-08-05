@@ -12,9 +12,9 @@ from torch.utils.data import DataLoader, WeightedRandomSampler
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.cuda.amp import GradScaler, autocast
-from architectures import ModelProtocol
-from criterion import FocalLoss, BCEVAELoss, partial_auc
-from data import SkinDataset, TRAIN_TRANSFORM, TRANSFORM
+from architectures import ISICModel
+from .criterion import get_lossfn, partial_auc
+from .data import SkinDataset, TRAIN_TRANSFORM, TRANSFORM
 
 __all__= ['train_evaluate_model', 'test_model']
 
@@ -23,7 +23,7 @@ def train_evaluate_model(
     train_data: pandas.DataFrame, 
     valid_data: pandas.DataFrame, 
     config: Dict[str, Any], 
-    model: Union[ModelProtocol], 
+    model: Union[ISICModel], 
     **kwargs
 ) -> int:
     """
@@ -36,7 +36,7 @@ def train_evaluate_model(
         model (Union[ModelProtocol]): The model to be trained and evaluated.
         **kwargs: Additional keyword arguments for model training.
     """
-    assert isinstance(model, (ModelProtocol)), 'Model Not Supported'
+    assert isinstance(model, ISICModel), 'Model Not Supported'
     
     model.to('cuda')
 
@@ -46,13 +46,13 @@ def train_evaluate_model(
     epochs= config['training']['epochs']
     patience= 0
     
-    log_dir= os.path.join(os.path.dirname(__file__), config['logging']['log_dir'])
-    img_dir= os.path.join(os.path.dirname(__file__), config['data']['image_dir'])
+    log_dir= os.path.join(os.path.dirname(__file__), '..', config['logging']['log_dir'])
+    img_dir= os.path.join(os.path.dirname(__file__), '..', config['data']['image_dir'])
 
-    optimizer= AdamW(model.parameters(), lr=config['training']['lr'], weight_decay=config['training']['weight_decay'])
+    optimizer= AdamW(model.parameters(), lr=config['training']['learning_rate'], weight_decay=config['training']['weight_decay'])
     scheduler= ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=patience)
-    criterion= FocalLoss()
-    vae_criterion= BCEVAELoss()
+    criterion= get_lossfn(config['training']['loss_fn'])()
+    vae_criterion= get_lossfn('VAE')()
     scaler= GradScaler()
 
     num_runs= len(fnmatch.filter(os.listdir(os.path.join(log_dir, 'runs')), f"{model_name}_*"))
@@ -66,7 +66,7 @@ def train_evaluate_model(
     os.makedirs(os.path.join(log_dir, f'runs/{run_name}/'), exist_ok=True)
     os.makedirs(os.path.join(log_dir, f'checkpoints/{checkpoint_name}/'), exist_ok=True)
     
-    writer= SummaryWriter(log_dir=os.path.join(log_dir, run_name))
+    writer= SummaryWriter((os.path.join(log_dir, 'runs', run_name)))
 
     train_dataset= SkinDataset(train_data, TRAIN_TRANSFORM, img_dir)
     valid_dataset= SkinDataset(valid_data, TRANSFORM, img_dir)
@@ -93,7 +93,7 @@ def train_evaluate_model(
     )
 
     best_valid= float('inf')
-    
+    paucs= []
     for epoch in tqdm(range(epochs), desc= 'Epochs'):
         model.train()
         train_loss = 0.0
@@ -104,7 +104,6 @@ def train_evaluate_model(
                 if step>= train_steps:
                     break
 
-                optimizer.zero_grad()
                 tabular_cont, tabular_bin= tabular_cont.to('cuda'), tabular_bin.to('cuda')
                 images, labels= images.to('cuda'), labels.to('cuda').float()
 
@@ -116,6 +115,7 @@ def train_evaluate_model(
                     else:
                         loss= criterion(outputs.squeeze(dim=1), labels)
 
+                optimizer.zero_grad()
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
@@ -138,9 +138,10 @@ def train_evaluate_model(
         if len(unique_labels)< 2:
             print(f' Warning: Only one class present in labels. Unique labels: {unique_labels}')
         else:
-            p_auc= partial_auc(all_labels, all_preds)
+            p_auc= partial_auc(all_labels, all_preds).item()
+            paucs.append(p_auc)
+            writer.add_scalar('Partial AUC/train', p_auc, epoch* train_steps+ step)
         
-        writer.add_scalar('Partial AUC/train', p_auc.item(), epoch* train_steps+ step)
         print(f' Epoch {epoch+ 1}/{epochs}, Loss: {train_loss:.4e}')
 
         model.eval()
@@ -182,9 +183,10 @@ def train_evaluate_model(
             if len(unique_labels)< 2:
                 print(f' Warning: Only one class present in labels. Unique labels: {unique_labels}')
             else:
-                p_auc= partial_auc(all_labels, all_preds)
+                p_auc= partial_auc(all_labels, all_preds).item()
+                paucs.append(p_auc)
+                writer.add_scalar('Partial AUC/valid', p_auc, epoch)
             
-            writer.add_scalar('Partial AUC/valid', p_auc, epoch)
             scheduler.step(val_loss)
             
             torch.cuda.empty_cache()
@@ -193,7 +195,16 @@ def train_evaluate_model(
             if best_valid> val_loss:
                 best_valid= val_loss
                 patience= 0
-                torch.save(model.state_dict(), os.path.join(log_dir, f'checkpoints/{checkpoint_name}/{model_name}.pt'))
+
+                model_dict={
+                    'model_state_dict': model.state_dict(),
+                    'avg_pauc': round(numpy.mean(paucs).item(), 3),
+                    'loss': val_loss,
+                    'config': config,
+                    'model_architecture': model
+                }
+
+                torch.save(model_dict, os.path.join(log_dir, f'checkpoints/{checkpoint_name}/{model_name}.pth'))
                 print(f' Saved best model with validation loss: {val_loss:.4e}')
             else:
                 patience+= 1
@@ -201,14 +212,22 @@ def train_evaluate_model(
                     print(f' Early stopping triggered after {epoch+ 1} total epochs')
                     break
 
-    torch.save(model.state_dict(), os.path.join(log_dir, f'checkpoints/{checkpoint_name}/{model_name}_final.pt'))
+    model_dict={
+        'model_state_dict': model.state_dict(),
+        'avg_pauc': round(numpy.mean(paucs).item(), 3),
+        'loss': val_loss,
+        'config': config,
+        'model_architecture': model
+    }
+
+    torch.save(model_dict, os.path.join(log_dir, f'checkpoints/{checkpoint_name}/{model_name}_final.pth'))
 
     return num_runs
 
 def test_model(
     data: pandas.DataFrame, 
     config: Dict[str, str],  
-    model: Union[ModelProtocol], 
+    model: Union[ISICModel], 
     **kwargs
 ) -> Any:
     """
@@ -223,8 +242,8 @@ def test_model(
     Returns:
         Any: Partial AUC score of the model on the test data.
     """
-    img_dir= os.path.join(os.path.dirname(__file__), config['data']['image_dir'])
-    log_dir= os.path.join(os.path.dirname(__file__), config['logging']['log_dir'])
+    img_dir= os.path.join(os.path.dirname(__file__), '..', config['data']['image_dir'])
+    log_dir= os.path.join(os.path.dirname(__file__), '..', config['logging']['log_dir'])
 
     unique_labels= numpy.unique(data['target'].values)
     if len(unique_labels) < 2:
@@ -241,14 +260,17 @@ def test_model(
     
     all_labels, all_preds= [], []
 
-    ck_fp= os.path.join(log_dir, f"checkpoints/{config['model']['name']}_ck{config['testing']['run']}/{config['model']['name']}_final.pt")
+    ck_fp= os.path.join(log_dir, f"checkpoints/{config['model']['name']}_ck{config['testing']['run']}/{config['model']['name']}_final.pth")
     run_fp_for_metric= os.path.join(log_dir, f"runs/{config['model']['name']}_run{config['testing']['run']}/metric.json")
 
-    state_dict= torch.load(ck_fp)
-    model.load_state_dict(state_dict)
+    checkpoint= torch.load(ck_fp)
+    model= checkpoint['model_architecture']
+    model.load_state_dict(checkpoint['model_state_dict'])
     model.to('cuda')
     model.eval()
-    
+
+    assert isinstance(model, ISICModel), 'Model Not Supported'
+
     with torch.inference_mode():
         for images, tabular_cont, tabular_bin, labels in tqdm(test_loader, desc='Test Batches', leave=False):
             tabular_cont, tabular_bin= tabular_cont.to('cuda'), tabular_bin.to('cuda')
