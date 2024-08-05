@@ -5,7 +5,12 @@ from .pipeline import *
 
 __all__= []
 
-__all__.extend(criterion.__all__)
 __all__.extend(data.__all__)
 __all__.extend(helper.__all__)
 __all__.extend(pipeline.__all__)
+
+register_lossfn('Focal', FocalLoss)
+register_lossfn('BCE', BCELoss)
+register_lossfn('VAE', BCEVAELoss)
+
+__all__.extend(criterion.__all__)

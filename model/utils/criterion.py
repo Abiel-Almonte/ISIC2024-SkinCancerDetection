@@ -3,10 +3,24 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy
 from sklearn.metrics import roc_auc_score
+from typing import Dict, Type, Protocol
 
-__all__= ['FocalLoss', 'BCEVAELoss']
+__all__= ['BCELoss', 'FocalLoss', 'BCEVAELoss', 'LossFn', 'get_lossfn', 'register_lossfn']
 
-class FocalLoss(nn.Module):
+class LossFn(Protocol):
+    def forward(self, *args, **kwargs) -> torch.Tensor:
+        ...
+
+loss_registry:  Dict[str, Type[LossFn]] = {}
+
+class BCELoss(nn.BCEWithLogitsLoss, LossFn):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    
+    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        return super().forward(input, target)
+
+class FocalLoss(nn.Module, LossFn):
     def __init__(self, alpha=0.25, gamma=2)-> None:
         """
         Initializes the Focal Loss.
@@ -26,7 +40,7 @@ class FocalLoss(nn.Module):
 
         return F_loss.mean()
     
-class BCEVAELoss(nn.Module):
+class BCEVAELoss(nn.Module, LossFn):
     def __init__(self)-> None:
         super().__init__()
 
@@ -70,3 +84,11 @@ def partial_auc(labels, predictions, min_tpr: float=0.80):
     partial_auc_scaled= roc_auc_score(labels, predictions, max_fpr=max_fpr)
 
     return 0.5 * max_fpr**2 + (max_fpr - 0.5 * max_fpr**2) / (1.0 - 0.5) * (partial_auc_scaled - 0.5)
+
+def register_lossfn(name: str, LossClass: Type[LossFn]):
+    loss_registry[name] = LossClass
+
+def get_lossfn(name: str):
+    if name not in loss_registry:
+        raise ValueError(f"Model {name} not found. Choose one of the following: {list(loss_registry.keys())}")
+    return loss_registry[name]

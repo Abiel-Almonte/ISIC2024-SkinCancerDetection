@@ -2,10 +2,11 @@ seed: 42
 test_only: False
 
 model:
-  name: 'EfficientUNetWithTabular'
+  name: 'CrossModalTransformer'
   parameters:
     cont_features: 31
     bin_features: 6
+    image_size: 448
 
 testing:
   enabled: True
@@ -15,7 +16,8 @@ testing:
   run: 31
 
 training:
-  lr: 0.0001
+  loss_fn: 'BCE'
+  learning_rate: 0.0001
   weight_decay: 0.01
   batch_size: 16
   num_workers: 20
