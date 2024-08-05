@@ -46,8 +46,8 @@ def train_evaluate_model(
     epochs= config['training']['epochs']
     patience= 0
     
-    log_dir= os.path.join(os.path.dirname(__file__), '..', config['logging']['log_dir'])
-    img_dir= os.path.join(os.path.dirname(__file__), '..', config['data']['image_dir'])
+    log_dir= os.path.join(os.path.dirname(__file__), config['logging']['log_dir'])
+    img_dir= os.path.join(os.path.dirname(__file__), config['data']['image_dir'])
 
     optimizer= AdamW(model.parameters(), lr=config['training']['learning_rate'], weight_decay=config['training']['weight_decay'])
     scheduler= ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=patience)
@@ -242,8 +242,8 @@ def test_model(
     Returns:
         Any: Partial AUC score of the model on the test data.
     """
-    img_dir= os.path.join(os.path.dirname(__file__), '..', config['data']['image_dir'])
-    log_dir= os.path.join(os.path.dirname(__file__), '..', config['logging']['log_dir'])
+    img_dir= os.path.join(os.path.dirname(__file__), config['data']['image_dir'])
+    log_dir= os.path.join(os.path.dirname(__file__), config['logging']['log_dir'])
 
     unique_labels= numpy.unique(data['target'].values)
     if len(unique_labels) < 2:
