@@ -70,7 +70,7 @@ class FeatureFusion(nn.Module):
         self.ffn = nn.Sequential(*ffn_layers)
 
     def forward(self, img_feat: torch.Tensor, tab_feat: torch.Tensor) -> torch.Tensor:
-        combined = torch.cat([img_feat, tab_feat], dim=1).unsqueeze(0)
+        combined = torch.cat([img_feat, tab_feat], dim=1)
 
         if self.use_attention:
             combined = combined.unsqueeze(0)
