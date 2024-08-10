@@ -10,22 +10,31 @@ from torch.utils.data import Dataset
 
 __all__ = ['TRAIN_TRANSFORM', 'TRANSFORM', 'SkinDataset', 'oversample', 'prepare']
 
+class GaussianNoise(object):
+    def __init__(self, mean=0., std=1.):
+        self.std = std
+        self.mean = mean
+        
+    def __call__(self, tensor):
+        return tensor + torch.randn(tensor.size()) * self.std + self.mean
+    
 TRAIN_TRANSFORM = transforms.Compose([
-    transforms.Resize(448),
-    # transforms.RandomCrop(),
+    transforms.Resize(336),
     transforms.RandomHorizontalFlip(),
     transforms.RandomVerticalFlip(),
     transforms.RandomRotation(30),
     transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.3),
+    transforms.RandomAffine(degrees=30, translate=(0.1, 0.1)),
     transforms.ToTensor(),
-    transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
+    transforms.RandomErasing(p=0.5),
+    GaussianNoise(0., 0.1),
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
-
 TRANSFORM = transforms.Compose([
-    transforms.Resize(448),
+    transforms.Resize(336),
     # transforms.CenterCrop(448),
     transforms.ToTensor(),
-    transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
 
 class SkinDataset(Dataset):
@@ -49,6 +58,7 @@ class SkinDataset(Dataset):
         ])
         self.df_bin = self.df[['sex', 'anterior torso', 'head/neck', 'lower extremity', 
                                'posterior torso', 'upper extremity']]
+        self.df_cont= (self.df_cont - self.df_cont.mean())/ self.df_cont.std()
 
     def __len__(self) -> int:
         return len(self.df)
@@ -84,7 +94,27 @@ def oversample(data: pandas.DataFrame, seed: int) -> pandas.DataFrame:
 
     return pandas.concat([X_resampled, pandas.Series(y_resampled, name='target')], axis=1)
 
-def prepare(data: pandas.DataFrame, test_size: int | float , seed: int, use_oversample: bool = True) -> Tuple[pandas.DataFrame, pandas.DataFrame]:
+def undersample(df, seed:int, N=117900):
+    """
+    Performs random undersampling to balance the dataset.
+
+    Parameters:
+        data (pandas.DataFrame): The dataset to oversample.
+        seed (int): Random seed for reproducibility.
+
+    Returns:
+        pandas.DataFrame: The undersampled dataset.
+    """
+    p_cases = df[df['target'] == 1]
+    n_cases = df[df['target'] == 0]
+
+    n_cases = n_cases.sample(n=N, random_state=seed)
+
+    df = pandas.concat([n_cases, p_cases])
+
+    return df
+
+def prepare(data: pandas.DataFrame, test_size: int | float , seed: int, use_oversample: bool = False, use_undersample:bool= True) -> Tuple[pandas.DataFrame, pandas.DataFrame]:
     """
     Prepares the dataset by splitting it into training and testing sets, and optionally oversampling the training set.
 
@@ -107,7 +137,9 @@ def prepare(data: pandas.DataFrame, test_size: int | float , seed: int, use_over
     
     train_df = pandas.concat([X_train, y_train], axis=1).reset_index(drop=True)
     if use_oversample:
-        train_df = oversample(train_df, seed)
+        train_df= oversample(train_df, seed)
+    if use_undersample:
+        train_df= undersample(train_df, seed) 
     test_df = pandas.concat([X_test, y_test], axis=1).reset_index(drop=True)
     
     return train_df, test_df
