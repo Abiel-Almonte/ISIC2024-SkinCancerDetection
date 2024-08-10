@@ -7,7 +7,7 @@ from .base import ISICModel
 __all__= ['EfficientUNetWithTabular', 'EfficientUNetWithTabular_v2', 'ViTWithTabular']
 
 class EfficientUNetWithTabular(nn.Module, ISICModel):
-    def __init__(self, n_cont_features:int= 31, n_bin_features: int= 6):
+    def __init__(self, cont_features:int= 31, bin_features: int= 6):
         """
         Initialize the EfficientUNetWithTabular model.
 
@@ -17,7 +17,7 @@ class EfficientUNetWithTabular(nn.Module, ISICModel):
         """
         super().__init__()
         self.unet = EfficientUNet()
-        self.tabnet = TabNet(n_cont_features, n_bin_features)
+        self.tabnet = TabNet(cont_features, bin_features)
         self.fc = nn.Linear(64, 1)
 
 
@@ -29,7 +29,7 @@ class EfficientUNetWithTabular(nn.Module, ISICModel):
         return self.fc(combined)
 
 class EfficientUNetWithTabular_v2(nn.Module,  ISICModel):
-    def __init__(self, n_cont_features:int , n_bin_features:int) -> None:
+    def __init__(self, cont_features:int , bin_features:int) -> None:
         """
         Initialize the EfficientUNetWithTabular_v2 model.
 
@@ -39,11 +39,11 @@ class EfficientUNetWithTabular_v2(nn.Module,  ISICModel):
         """
         super().__init__()
         self.unet= EfficientUNet_v2()
-        self.tabnet= TabNet(n_cont_features, n_bin_features)
-        self.fusion = FeatureFusion(32, 32)
+        self.tabnet= TabNet(cont_features, bin_features, use_attention=False, out_dim=16, hidden_dim=512, depth=2)
+        self.fusion= FeatureFusion(img_features= 16, tab_features= 16, out_dim= 32, use_attention=False)
         self.ffn= nn.Sequential(
-            nn.BatchNorm1d(64),
-            nn.Linear(64,1))
+            nn.BatchNorm1d(32),
+            nn.Linear(32, 1))
 
     def forward(self, image:torch.Tensor, continous:torch.Tensor, binary:torch.Tensor)-> torch.Tensor:
         image_features= self.unet(image)
@@ -53,7 +53,7 @@ class EfficientUNetWithTabular_v2(nn.Module,  ISICModel):
 
 
 class ViTWithTabular(nn.Module, ISICModel):
-    def __init__(self, n_cont_features: int, n_bin_features: int) -> None:
+    def __init__(self, cont_features: int, bin_features: int) -> None:
         """
         Initialize the ViTWithTabular_v2 model.
 
@@ -63,11 +63,11 @@ class ViTWithTabular(nn.Module, ISICModel):
         """
         super().__init__()
         self.vit_unet = ViTUNet()
-        self.tabnet = TabNet(n_cont_features, n_bin_features)
-        self.fusion = FeatureFusion(32, 32)
+        self.tabnet = TabNet(cont_features, bin_features, use_attention=False, out_dim= 16, hidden_dim=512, depth=2)
+        self.fusion = FeatureFusion(img_features=32,  tab_features=16, out_dim=48)
         self.ffn = nn.Sequential(
-            nn.BatchNorm1d(64),
-            nn.Linear(64, 1))
+            nn.BatchNorm1d(48),
+            nn.Linear(48, 1))
 
     def forward(self, image: torch.Tensor, continuous: torch.Tensor, binary: torch.Tensor) -> torch.Tensor:
         image_features = self.vit_unet(image)
