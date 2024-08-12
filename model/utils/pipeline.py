@@ -9,7 +9,7 @@ from typing import Tuple, Any, Union, Dict
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader, WeightedRandomSampler
-from torch.optim import AdamW
+from torch.optim import AdamW, Adam, SGD, RMSprop
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.cuda.amp import GradScaler, autocast
 from architectures import ISICModel
@@ -18,6 +18,28 @@ from .data import SkinDataset, TRAIN_TRANSFORM, TRANSFORM
 
 __all__= ['train_evaluate_model', 'test_model']
 
+def get_optim(name: str)-> torch.optim.Optimizer:
+    if name == 'Adam':
+        return Adam
+    elif name == 'AdamW':
+        return AdamW
+    elif name =='SGD':
+        return SGD
+    elif name== 'RMS':
+        return RMSprop
+    else:
+        raise NotImplemented('Optimizer Not Supported')
+    
+def set_trainable(module, trainable):
+    for param in module.parameters():
+        param.requires_grad = trainable
+
+def gradual_unfreeze(model, num_layers_to_unfreeze):
+    set_trainable(model, False)
+    
+    children = list(model.children())
+    for child in children[-num_layers_to_unfreeze:]:
+        set_trainable(child, True)
 
 def train_evaluate_model(
     train_data: pandas.DataFrame, 
@@ -37,22 +59,24 @@ def train_evaluate_model(
         **kwargs: Additional keyword arguments for model training.
     """
     assert isinstance(model, ISICModel), 'Model Not Supported'
-    
+
     model.to('cuda')
 
     model_name= config['model']['name']
     train_steps= config['training']['train_steps']
     valid_steps= config['training']['valid_steps']
     epochs= config['training']['epochs']
-    patience= 0
-    
+    patience= config['training']['patience']
+
+
     log_dir= os.path.join(os.path.dirname(__file__), config['logging']['log_dir'])
     img_dir= os.path.join(os.path.dirname(__file__), config['data']['image_dir'])
 
-    optimizer= AdamW(model.parameters(), lr=config['training']['learning_rate'], weight_decay=config['training']['weight_decay'])
+
+    optimizer= get_optim(config['training']['optim']['name'])(model.parameters(), **config['training']['optim']['parameters'])
     scheduler= ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=patience)
     criterion= get_lossfn(config['training']['loss_fn'])()
-    vae_criterion= get_lossfn('VAE')()
+    tuple_criterion= get_lossfn('cont')()
     scaler= GradScaler()
 
     num_runs= len(fnmatch.filter(os.listdir(os.path.join(log_dir, 'runs')), f"{model_name}_*"))
@@ -63,8 +87,8 @@ def train_evaluate_model(
     checkpoint_name= f'{model_name}_ck{num_cks}'
     run_name= f'{model_name}_run{num_runs}'
 
-    os.makedirs(os.path.join(log_dir, f'runs/{run_name}/'), exist_ok=True)
-    os.makedirs(os.path.join(log_dir, f'checkpoints/{checkpoint_name}/'), exist_ok=True)
+    os.makedirs(os.path.join(log_dir, f'runs/{run_name}/'), exist_ok= True)
+    os.makedirs(os.path.join(log_dir, f'checkpoints/{checkpoint_name}/'), exist_ok= True)
     
     writer= SummaryWriter((os.path.join(log_dir, 'runs', run_name)))
 
@@ -92,6 +116,8 @@ def train_evaluate_model(
         pin_memory= True
     )
 
+    total_layers = len(list(model.children()))
+    layers_to_unfreeze= 0
     best_valid= float('inf')
     paucs= []
     for epoch in tqdm(range(epochs), desc= 'Epochs'):
@@ -110,13 +136,14 @@ def train_evaluate_model(
                 with autocast():
                     outputs= model(images, tabular_cont, tabular_bin)
                     if isinstance(outputs, Tuple):
-                        outputs, mu, logvar= outputs
-                        loss= vae_criterion(outputs.squeeze(dim=1), labels, mu, logvar)
+                        outputs, proj = outputs
+                        loss= tuple_criterion(proj, labels) + criterion(outputs.squeeze(dim= 1), labels)
                     else:
                         loss= criterion(outputs.squeeze(dim=1), labels)
 
                 optimizer.zero_grad()
                 scaler.scale(loss).backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.01)
                 scaler.step(optimizer)
                 scaler.update()
 
@@ -129,6 +156,11 @@ def train_evaluate_model(
 
                 bar.set_postfix(loss= loss.item(), refresh= True)
                 bar.update(1)
+
+        if (epoch+1) % 4== 0:
+            layers_to_unfreeze= min(layers_to_unfreeze + 2, total_layers)
+            gradual_unfreeze(model, layers_to_unfreeze)
+            print(f' Layers unfrozen: {layers_to_unfreeze}')
 
         train_loss/= train_steps
         all_labels= numpy.concatenate(all_labels)
@@ -160,10 +192,10 @@ def train_evaluate_model(
                     with autocast():
                         outputs= model(images, tabular_cont, tabular_bin)
                         if isinstance(outputs, Tuple):
-                            outputs, mu, logvar= outputs
-                            loss= vae_criterion(outputs.squeeze(dim= 1), labels, mu, logvar)
+                            outputs, proj = outputs
+                            loss= tuple_criterion(proj, labels) + criterion(outputs.squeeze(dim= 1), labels)
                         else:
-                            loss= criterion(outputs.squeeze(dim= 1), labels)
+                            loss= criterion(outputs.squeeze(dim=1), labels)
 
                     probabilities= torch.sigmoid(outputs.squeeze(dim= 1))
                     val_loss+= loss.item()
