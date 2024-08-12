@@ -2,21 +2,23 @@ seed: 42
 test_only: False
 
 model:
-  name: 'VAETabNet'
+  name: 'MetaLearner'
   parameters:
     cont_features: 31
     bin_features: 6
-    image_size: 448
 
 training:
   loss_fn: 'BCE'
-  learning_rate: 0.0001
-  weight_decay: 0.01
-  batch_size: 16
+  optim:
+    name: 'AdamW'
+    parameters:
+      lr:  0.001
+      weight_decay: 0.01
+  batch_size: 10
   num_workers: 20
-  epochs: 50
+  epochs: 100
   train_steps: 500
-  valid_steps: 500
+  valid_steps: 1000
   patience: 5
 
 testing:
@@ -24,7 +26,7 @@ testing:
   test_size: 100159
   batch_size: 16
   num_workers: 20
-  run: 0
+  run: 22
   
 data:
   image_dir: '../../data/train-image/image'
