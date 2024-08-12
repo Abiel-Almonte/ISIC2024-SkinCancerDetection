@@ -12,5 +12,5 @@ __all__.extend(pipeline.__all__)
 register_lossfn('Focal', FocalLoss)
 register_lossfn('BCE', BCELoss)
 register_lossfn('VAE', BCEVAELoss)
-
+register_lossfn('cont', ContrastiveLoss)
 __all__.extend(criterion.__all__)

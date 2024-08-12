@@ -3,9 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy
 from sklearn.metrics import roc_auc_score
+from pytorch_metric_learning import losses
 from typing import Dict, Type, Protocol
 
-__all__= ['BCELoss', 'FocalLoss', 'BCEVAELoss', 'LossFn', 'get_lossfn', 'register_lossfn']
+__all__= ['BCELoss', 'FocalLoss', 'BCEVAELoss', 'ContrastiveLoss', 'LossFn', 'get_lossfn', 'register_lossfn']
 
 class LossFn(Protocol):
     def forward(self, *args, **kwargs) -> torch.Tensor:
@@ -92,3 +93,21 @@ def get_lossfn(name: str):
     if name not in loss_registry:
         raise ValueError(f"Model {name} not found. Choose one of the following: {list(loss_registry.keys())}")
     return loss_registry[name]
+
+
+class ContrastiveLoss(nn.Module):
+    def __init__(self, temperature=0.3):
+        super().__init__()
+        self.temperature = temperature
+
+    def forward(self, feature_vectors, labels):
+        # Normalize feature vectors
+        feature_vectors_normalized = F.normalize(feature_vectors, p=2, dim=1)
+        # Compute logits
+        logits = torch.div(
+            torch.matmul(
+                feature_vectors_normalized, torch.transpose(feature_vectors_normalized, 0, 1)
+            ),
+            self.temperature,
+        )
+        return losses.NTXentLoss(temperature=0.07)(logits, torch.squeeze(labels))
