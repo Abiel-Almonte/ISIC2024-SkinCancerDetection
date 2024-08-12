@@ -1,3 +1,4 @@
 /data
+/catboost_info
 /model/logs/
 **/__pycache__/
