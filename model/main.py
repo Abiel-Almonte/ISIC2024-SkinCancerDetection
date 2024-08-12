@@ -18,8 +18,8 @@ metadata= pandas.read_csv(os.path.join(
     os.path.dirname(__file__), config['data']['metadata_file'])
 ).drop(columns= ['Unnamed: 0']) #duplicate index
 
-metadata, test_data= prepare(metadata, config['testing']['test_size'], config['seed'], use_oversample=False)
-train_data, valid_data= prepare(metadata, test_size=0.3, seed=config['seed'], use_oversample= False)
+metadata, test_data= prepare(metadata, config['testing']['test_size'], config['seed'], use_undersample=False)
+train_data, valid_data= prepare(metadata, test_size=0.3, seed=config['seed'], use_undersample= True)
 
 
 
