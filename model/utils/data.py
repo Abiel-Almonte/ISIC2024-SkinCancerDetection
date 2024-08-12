@@ -19,7 +19,8 @@ class GaussianNoise(object):
         return tensor + torch.randn(tensor.size()) * self.std + self.mean
     
 TRAIN_TRANSFORM = transforms.Compose([
-    transforms.Resize(336),
+    transforms.Resize(448),
+    transforms.RandomResizedCrop(336, scale=(0.8, 1.0)),
     transforms.RandomHorizontalFlip(),
     transforms.RandomVerticalFlip(),
     transforms.RandomRotation(30),
