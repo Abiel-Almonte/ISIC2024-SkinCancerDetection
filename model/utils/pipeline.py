@@ -10,7 +10,7 @@ from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader, WeightedRandomSampler
 from torch.optim import AdamW, Adam, SGD, RMSprop
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import ReduceLROnPlateau, CosineAnnealingLR
 from torch.cuda.amp import GradScaler, autocast
 from architectures import ISICModel
 from .criterion import get_lossfn, partial_auc
@@ -75,6 +75,7 @@ def train_evaluate_model(
 
     optimizer= get_optim(config['training']['optim']['name'])(model.parameters(), **config['training']['optim']['parameters'])
     scheduler= ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=patience)
+    #scheduler= CosineAnnealingLR(optimizer, T_max=10)
     criterion= get_lossfn(config['training']['loss_fn'])()
     tuple_criterion= get_lossfn('cont')()
     scaler= GradScaler()
@@ -157,10 +158,10 @@ def train_evaluate_model(
                 bar.set_postfix(loss= loss.item(), refresh= True)
                 bar.update(1)
 
-        if (epoch+1) % 4== 0:
-            layers_to_unfreeze= min(layers_to_unfreeze + 2, total_layers)
-            gradual_unfreeze(model, layers_to_unfreeze)
-            print(f' Layers unfrozen: {layers_to_unfreeze}')
+        #if (epoch+1) % 4== 0:
+        #    layers_to_unfreeze= min(layers_to_unfreeze + 2, total_layers)
+        #    gradual_unfreeze(model, layers_to_unfreeze)
+        #    print(f' Layers unfrozen: {layers_to_unfreeze}')
 
         train_loss/= train_steps
         all_labels= numpy.concatenate(all_labels)
@@ -238,11 +239,11 @@ def train_evaluate_model(
 
                 torch.save(model_dict, os.path.join(log_dir, f'checkpoints/{checkpoint_name}/{model_name}.pth'))
                 print(f' Saved best model with validation loss: {val_loss:.4e}')
-            else:
-                patience+= 1
-                if patience>= 10:
-                    print(f' Early stopping triggered after {epoch+ 1} total epochs')
-                    break
+            else: pass
+                #patience+= 1
+                #if patience>= 10:
+                #    print(f' Early stopping triggered after {epoch+ 1} total epochs')
+                #    break
 
     model_dict={
         'model_state_dict': model.state_dict(),
