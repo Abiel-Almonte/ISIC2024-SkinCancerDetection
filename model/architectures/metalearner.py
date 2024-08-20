@@ -20,7 +20,7 @@ class EfficientNetEVAModel(nn.Module, ISICModel):
 
         self.tabular_net = nn.Sequential(
             nn.Linear(31+ 6, 128),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.Dropout(0.3),
             nn.Linear(128, 380),
         )
