@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from .blocks import CrossModalAttention
 from .base import ISICModel
-from torchvision.models import vit_b_16
+from torchvision import models
 
 __all__= ['CrossModalTransformer']
 
@@ -20,7 +20,7 @@ class CrossModalTransformer(nn.Module, ISICModel):
             mlp_dim (int): Dimension of the feed-forward network in the transformer.
         """
         super().__init__()
-        self.vit = vit_b_16(image_size= image_size)
+        self.vit = models.vit_b_16(image_size= image_size, weights= models.ViT_B_16_Weights.IMAGENET1K_SWAG_E2E_V1)
         self.vit.heads = nn.Identity()
         self.vit_out= nn.Linear(self.vit.hidden_dim, dim//2)
         self.cont_embed = nn.Linear(cont_features, dim//4)
@@ -54,13 +54,3 @@ class CrossModalTransformer(nn.Module, ISICModel):
             x = norm2(x + ff_out)
 
         return self.mlp_head(x)
-
-if '__main__' == __name__:
-    from torchsummary import summary
-    img= torch.randn(32, 3, 224, 224)
-    cont= torch.randn(32, 31)
-    bin= torch.randint(0, 6, (32, 1))
-    
-    model= CrossModalTransformer()
-    output= model(img, cont, bin)
-    summary(model, input_size= [(3, 224, 224), (31,), (5,)],  batch_dim=32, depth=3, verbose=1)
