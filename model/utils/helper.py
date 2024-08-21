@@ -22,9 +22,10 @@ def train_evaluate_test(
     Returns:
         Any: The result of the test model function if test_args is provided.
     """
-    run = cuda_stream_wrapper(train_evaluate_model, train_evaluate_args)
+    run, gs = cuda_stream_wrapper(train_evaluate_model, train_evaluate_args)
     if test_args is not None:
         test_args['config']['testing'].update({'run': run})
+        test_args['global_step']= gs
         return cuda_stream_wrapper(test_model, test_args)
 
 def cuda_stream_wrapper(

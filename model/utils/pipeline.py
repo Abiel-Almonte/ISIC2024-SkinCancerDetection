@@ -75,7 +75,7 @@ def train_evaluate_model(
 
 
     optimizer= get_optim(config['training']['optim']['name'])(model.parameters(), **config['training']['optim']['parameters'])
-    scheduler= ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=patience)
+    scheduler= ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=config['training']['lr_patience'])
     #scheduler= CosineAnnealingLR(optimizer, T_max=10)
     criterion= get_lossfn(config['training']['loss_fn'])()
     tuple_criterion= get_lossfn('cont')()
@@ -255,7 +255,7 @@ def train_evaluate_model(
                 print(f' Saved best model with validation loss: {val_loss:.4e}')
             else:
                 patience+= 1
-                if patience>= 30:
+                if patience>= config['training']['es_patience']:
                     print(f' Early stopping triggered after {epoch+ 1} total epochs')
                     break
 
@@ -268,12 +268,13 @@ def train_evaluate_model(
 
     torch.save(model_dict, os.path.join(log_dir, f'checkpoints/{checkpoint_name}/{model_name}_final.pth'))
 
-    return num_runs
+    return num_runs, global_step
 
 def test_model(
     data: pandas.DataFrame, 
     config: Dict[str, str],  
-    model: Union[ISICModel], 
+    model: Union[ISICModel],
+    global_step:int,
     **kwargs
 ) -> Any:
     """
@@ -335,6 +336,10 @@ def test_model(
     unique_labels= numpy.unique(all_labels)
 
     pAUC= partial_auc(all_labels, all_preds)
+
+    wandb.log({
+        'Partial AUC/Test': pAUC,
+    }, step= global_step)
     
     with open(run_fp_for_metric, 'w') as file:
         json.dump({'Partial AUC': round(pAUC, 3), 'Testing Samples': len(data)}, file)
