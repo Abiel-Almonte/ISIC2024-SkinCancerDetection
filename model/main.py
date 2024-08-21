@@ -53,6 +53,7 @@ def main():
         print(f"pAUC: {pAUC:.3f}")
 
 if __name__ == '__main__':
-    sweep_id = '008hadmj'
+    sweep= load_config( os.path.join(os.path.dirname(__file__), 'sweep.yaml'))
+    sweep_id =  wandb.sweep(sweep)
 
     wandb.agent(sweep_id=sweep_id, function=main, entity= "almonteabiel-florida-international-university", project= "kaggle")
