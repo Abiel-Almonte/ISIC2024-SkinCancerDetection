@@ -22,7 +22,8 @@ training:
   epochs: 1000
   train_steps: 500
   valid_steps: 1000
-  patience: 5
+  lr_patience: 5
+  es_patience: 10
   max_norm: 0.01
 
 testing:
