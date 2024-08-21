@@ -1,4 +1,5 @@
 /data
 /catboost_info
+/model/wandb
 /model/logs/
 **/__pycache__/
