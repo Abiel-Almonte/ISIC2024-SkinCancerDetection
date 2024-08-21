@@ -2,10 +2,13 @@ seed: 42
 test_only: False
 
 model:
-  name: 'MetaLearner'
+  name: 'LightMultiModalNN'
   parameters:
-    cont_features: 31
-    bin_features: 6
+    tabular_hidden_dim: 128
+    tabular_out_dim: 384
+    tabular_dropout: 0.3
+    classifier_hidden_dim: 64
+    classifier_dropout: 0.2    
 
 training:
   loss_fn: 'BCE'
@@ -16,14 +19,15 @@ training:
       weight_decay: 0.01
   batch_size: 10
   num_workers: 20
-  epochs: 100
+  epochs: 1000
   train_steps: 500
   valid_steps: 1000
   patience: 5
+  max_norm: 0.01
 
 testing:
   enabled: True
-  test_size: 100159
+  test_size: 50159
   batch_size: 16
   num_workers: 20
   run: 22
