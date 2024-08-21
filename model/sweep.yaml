@@ -36,7 +36,7 @@ parameters:
   training.epochs:
     distribution: int_uniform
     min: 50
-    max: 500
+    max: 100
   training.train_steps:
     distribution: int_uniform
     min: 200

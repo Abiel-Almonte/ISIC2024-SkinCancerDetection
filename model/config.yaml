@@ -27,7 +27,7 @@ training:
 
 testing:
   enabled: True
-  test_size: 50159
+  test_size: 100159
   batch_size: 16
   num_workers: 20
   run: 22
