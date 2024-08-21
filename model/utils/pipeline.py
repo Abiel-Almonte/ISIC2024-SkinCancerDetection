@@ -338,7 +338,7 @@ def test_model(
     pAUC= partial_auc(all_labels, all_preds)
 
     wandb.log({
-        'Partial AUC/Test': pAUC,
+        'Partial AUC/test': pAUC,
     }, step= global_step)
     
     with open(run_fp_for_metric, 'w') as file:
