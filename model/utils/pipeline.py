@@ -5,6 +5,7 @@ import os
 import gc
 import json
 import fnmatch
+import wandb
 from typing import Tuple, Any, Union, Dict
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
@@ -66,7 +67,7 @@ def train_evaluate_model(
     train_steps= config['training']['train_steps']
     valid_steps= config['training']['valid_steps']
     epochs= config['training']['epochs']
-    patience= config['training']['patience']
+    patience= 0
 
 
     log_dir= os.path.join(os.path.dirname(__file__), config['logging']['log_dir'])
@@ -90,7 +91,6 @@ def train_evaluate_model(
 
     os.makedirs(os.path.join(log_dir, f'runs/{run_name}/'), exist_ok= True)
     os.makedirs(os.path.join(log_dir, f'checkpoints/{checkpoint_name}/'), exist_ok= True)
-    
     writer= SummaryWriter((os.path.join(log_dir, 'runs', run_name)))
 
     train_dataset= SkinDataset(train_data, TRAIN_TRANSFORM, img_dir)
@@ -119,6 +119,7 @@ def train_evaluate_model(
 
     total_layers = len(list(model.children()))
     layers_to_unfreeze= 0
+    global_step= 1
     best_valid= float('inf')
     paucs= []
     for epoch in tqdm(range(epochs), desc= 'Epochs'):
@@ -130,6 +131,7 @@ def train_evaluate_model(
             for step, (images, tabular_cont, tabular_bin, labels) in enumerate(train_loader):
                 if step>= train_steps:
                     break
+                global_step+=1
 
                 tabular_cont, tabular_bin= tabular_cont.to('cuda'), tabular_bin.to('cuda')
                 images, labels= images.to('cuda'), labels.to('cuda').float()
@@ -144,12 +146,15 @@ def train_evaluate_model(
 
                 optimizer.zero_grad()
                 scaler.scale(loss).backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.01)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config['training']['max_norm'])
                 scaler.step(optimizer)
                 scaler.update()
 
                 train_loss+= loss.item()
                 writer.add_scalar('Loss/train', loss.item(), (epoch* train_steps+ step))
+                wandb.log({
+                    "Loss/train": loss.item(),
+                }, step= global_step)
 
                 probabilities= torch.sigmoid(outputs.squeeze(dim=1))
                 all_labels.append(labels.detach().cpu().numpy())
@@ -174,7 +179,10 @@ def train_evaluate_model(
             p_auc= partial_auc(all_labels, all_preds).item()
             paucs.append(p_auc)
             writer.add_scalar('Partial AUC/train', p_auc, epoch* train_steps+ step)
-        
+            wandb.log({
+                'Partial AUC/train': p_auc,
+            }, step= global_step)
+
         print(f' Epoch {epoch+ 1}/{epochs}, Loss: {train_loss:.4e}')
 
         model.eval()
@@ -186,17 +194,17 @@ def train_evaluate_model(
                 for step, (images, tabular_cont, tabular_bin, labels) in enumerate(valid_loader):
                     if step>= valid_steps:
                         break
+                    global_step+=1
 
                     tabular_cont, tabular_bin= tabular_cont.to('cuda'), tabular_bin.to('cuda')
                     images, labels= images.to('cuda'), labels.to('cuda').float()
 
-                    with autocast():
-                        outputs= model(images, tabular_cont, tabular_bin)
-                        if isinstance(outputs, Tuple):
-                            outputs, proj = outputs
-                            loss= tuple_criterion(proj, labels) + criterion(outputs.squeeze(dim= 1), labels)
-                        else:
-                            loss= criterion(outputs.squeeze(dim=1), labels)
+                    outputs= model(images, tabular_cont, tabular_bin)
+                    if isinstance(outputs, Tuple):
+                        outputs, proj = outputs
+                        loss= tuple_criterion(proj, labels) + criterion(outputs.squeeze(dim= 1), labels)
+                    else:
+                        loss= criterion(outputs.squeeze(dim=1), labels)
 
                     probabilities= torch.sigmoid(outputs.squeeze(dim= 1))
                     val_loss+= loss.item()
@@ -205,6 +213,10 @@ def train_evaluate_model(
                     all_preds.append(probabilities.detach().cpu().numpy())
 
                     writer.add_scalar('Loss/valid', loss.item(), epoch* valid_steps+ step)
+                    wandb.log({
+                         "Loss/valid": loss.item(),
+                    }, step= global_step)
+
                     bar.set_postfix(loss= loss.item(), refresh= True)
                     bar.update(1)
 
@@ -219,6 +231,9 @@ def train_evaluate_model(
                 p_auc= partial_auc(all_labels, all_preds).item()
                 paucs.append(p_auc)
                 writer.add_scalar('Partial AUC/valid', p_auc, epoch)
+                wandb.log({
+                       'Partial AUC/valid': p_auc,
+                }, step= global_step)
             
             scheduler.step(val_loss)
             
@@ -233,23 +248,21 @@ def train_evaluate_model(
                     'model_state_dict': model.state_dict(),
                     'avg_pauc': round(numpy.mean(paucs).item(), 3),
                     'loss': val_loss,
-                    'config': config,
                     'model_architecture': model
                 }
 
                 torch.save(model_dict, os.path.join(log_dir, f'checkpoints/{checkpoint_name}/{model_name}.pth'))
                 print(f' Saved best model with validation loss: {val_loss:.4e}')
-            else: pass
-                #patience+= 1
-                #if patience>= 10:
-                #    print(f' Early stopping triggered after {epoch+ 1} total epochs')
-                #    break
+            else:
+                patience+= 1
+                if patience>= 30:
+                    print(f' Early stopping triggered after {epoch+ 1} total epochs')
+                    break
 
     model_dict={
         'model_state_dict': model.state_dict(),
         'avg_pauc': round(numpy.mean(paucs).item(), 3),
         'loss': val_loss,
-        'config': config,
         'model_architecture': model
     }
 
