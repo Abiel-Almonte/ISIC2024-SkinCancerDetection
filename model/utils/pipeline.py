@@ -12,7 +12,6 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader, WeightedRandomSampler
 from torch.optim import AdamW, Adam, SGD, RMSprop
 from torch.optim.lr_scheduler import ReduceLROnPlateau, CosineAnnealingLR
-from torch.cuda.amp import GradScaler, autocast
 from architectures import ISICModel
 from .criterion import get_lossfn, partial_auc
 from .data import SkinDataset, TRAIN_TRANSFORM, TRANSFORM
@@ -60,7 +59,6 @@ def train_evaluate_model(
         **kwargs: Additional keyword arguments for model training.
     """
     assert isinstance(model, ISICModel), 'Model Not Supported'
-
     model.to('cuda')
 
     model_name= config['model']['name']
@@ -79,7 +77,6 @@ def train_evaluate_model(
     #scheduler= CosineAnnealingLR(optimizer, T_max=10)
     criterion= get_lossfn(config['training']['loss_fn'])()
     tuple_criterion= get_lossfn('cont')()
-    scaler= GradScaler()
 
     num_runs= len(fnmatch.filter(os.listdir(os.path.join(log_dir, 'runs')), f"{model_name}_*"))
     num_cks= len(fnmatch.filter(os.listdir(os.path.join(log_dir, 'checkpoints')), f"{model_name}_*"))
@@ -99,7 +96,14 @@ def train_evaluate_model(
     class_counts= numpy.bincount(train_dataset.df['target'])
     class_weights= 1. / class_counts
     train_sample_weights= class_weights[train_dataset.df['target']]
-    train_sampler= WeightedRandomSampler(train_sample_weights, len(train_sample_weights))
+
+    generator= torch.Generator()
+    generator.manual_seed(config['seed'])
+    train_sampler= WeightedRandomSampler(
+        weights= train_sample_weights,
+        num_samples= len(train_sample_weights), 
+        generator= generator
+    )
     
     train_loader= DataLoader(
         train_dataset, 
@@ -114,7 +118,8 @@ def train_evaluate_model(
         batch_size= config['training']['batch_size'], 
         shuffle= True, 
         num_workers= config['training']['num_workers'], 
-        pin_memory= True
+        pin_memory= True,
+        generator= generator
     )
 
     total_layers = len(list(model.children()))
@@ -136,19 +141,17 @@ def train_evaluate_model(
                 tabular_cont, tabular_bin= tabular_cont.to('cuda'), tabular_bin.to('cuda')
                 images, labels= images.to('cuda'), labels.to('cuda').float()
 
-                with autocast():
-                    outputs= model(images, tabular_cont, tabular_bin)
-                    if isinstance(outputs, Tuple):
-                        outputs, proj = outputs
-                        loss= tuple_criterion(proj, labels) + criterion(outputs.squeeze(dim= 1), labels)
-                    else:
-                        loss= criterion(outputs.squeeze(dim=1), labels)
+                outputs= model(images, tabular_cont, tabular_bin)
+                if isinstance(outputs, Tuple):
+                    outputs, proj = outputs
+                    loss= tuple_criterion(proj, labels) + criterion(outputs.squeeze(dim= 1), labels)
+                else:
+                    loss= criterion(outputs.squeeze(dim=1), labels)
 
                 optimizer.zero_grad()
-                scaler.scale(loss).backward()
+                loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config['training']['max_norm'])
-                scaler.step(optimizer)
-                scaler.update()
+                optimizer.step()
 
                 train_loss+= loss.item()
                 writer.add_scalar('Loss/train', loss.item(), (epoch* train_steps+ step))
