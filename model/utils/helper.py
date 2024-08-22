@@ -3,10 +3,11 @@ import random
 import numpy
 import torch
 import yaml
-from .pipeline import train_evaluate_model, test_model
 from typing import Callable, Any, Dict
+from collections import defaultdict
+from .pipeline import train_evaluate_model, test_model
 
-__all__= ['train_evaluate_test', 'cuda_stream_wrapper', 'load_config', 'set_seed']
+__all__= ['train_evaluate_test', 'cuda_stream_wrapper', 'load_config', 'set_seed', 'parse_sweep']
 
 def train_evaluate_test(
     train_evaluate_args: Dict[Any, Any], 
@@ -64,6 +65,20 @@ def load_config(fp: str) -> Dict[str, Any]:
     """
     with open(fp, 'r') as file:
         return yaml.safe_load(file)
+
+def parse_sweep(sweep):
+    def helper(key, value, _dict):
+        parts = key.split('.')
+        for part in parts[:-1]:
+            _dict = _dict.setdefault(part, {})
+        _dict[parts[-1]] = value 
+
+    parsed = defaultdict(dict)
+    for key in sweep.keys():
+        val = sweep[key]
+        helper(key, val, parsed)
+
+    return parsed
 
 def set_seed(seed: int = 42) -> None:
     """
