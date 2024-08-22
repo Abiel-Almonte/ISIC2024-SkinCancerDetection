@@ -7,16 +7,28 @@ metric:
   name: Partial AUC/test
   goal: maximize
 parameters:
+  model.name:
+    values: [LightMultiModalNN]
   model.parameters.tabular_hidden_dim:
-    values: [32, 64, 128, 256, 384, 512]
+    distribution: int_uniform
+    min: 2
+    max: 512
   model.parameters.tabular_out_dim:
-    values: [32, 64, 128, 256, 384, 512]
+    distribution: int_uniform
+    min: 2
+    max: 512
   model.parameters.tabular_dropout:
-    values: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+    distribution: uniform
+    min: 0.1
+    max: 0.6
   model.parameters.classifier_hidden_dim:
-    values: [32, 64, 128, 384, 512]
+    distribution: int_uniform
+    min: 2
+    max: 512
   model.parameters.classifier_dropout:
-    values: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+    distribution: uniform
+    min: 0.1
+    max: 0.6
   training.loss_fn:
     values: ['BCE', 'Focal']
   training.optim.name:
@@ -30,7 +42,7 @@ parameters:
     min: 0.00001
     max: 0.1
   training.batch_size:
-    values: [8, 16, 32]
+    values: [8, 10, 16, 32]
   training.num_workers:
     values: [4, 8, 12, 16]
   training.epochs:
