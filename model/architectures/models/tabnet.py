@@ -51,7 +51,7 @@ class TabNet(nn.Module):
         for _ in range(depth):
             ffn_layers.extend([
                 nn.BatchNorm1d(current_dim),
-                nn.GELU(inplace= True),
+                nn.GELU(),
                 nn.Dropout(dropout_rate),
                 nn.Linear(current_dim, max(current_dim // 2, min_dim)),
             ])
@@ -60,7 +60,7 @@ class TabNet(nn.Module):
             
         ffn_layers.extend([
             nn.BatchNorm1d(current_dim),
-            nn.GELU(inplace= True),
+            nn.GELU(),
             nn.Dropout(dropout_rate),
             nn.Linear(current_dim, out_dim)
         ])

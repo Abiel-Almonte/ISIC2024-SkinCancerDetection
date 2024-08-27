@@ -29,7 +29,7 @@ class EfficientUNetWithTabular(nn.Module, ISICModel):
         return self.fc(combined)
 
 class EfficientUNetWithTabular_v2(nn.Module,  ISICModel):
-    def __init__(self, cont_features:int , bin_features:int) -> None:
+    def __init__(self, cont_features:int= 31, bin_features:int= 6) -> None:
         """
         Initialize the EfficientUNetWithTabular_v2 model.
 
@@ -40,7 +40,7 @@ class EfficientUNetWithTabular_v2(nn.Module,  ISICModel):
         super().__init__()
         self.unet= EfficientUNet_v2()
         self.tabnet= TabNet(cont_features, bin_features, use_attention=False, out_dim=16, hidden_dim=512, depth=2)
-        self.fusion= FeatureFusion(img_features= 16, tab_features= 16, out_dim= 32, use_attention=False)
+        self.fusion= FeatureFusion(img_features= 32, tab_features= 16, out_dim= 32, use_attention=False)
         self.ffn= nn.Sequential(
             nn.BatchNorm1d(32),
             nn.Linear(32, 1))
