@@ -6,9 +6,9 @@ from PIL import Image
 from sklearn.model_selection import train_test_split
 from imblearn.over_sampling import RandomOverSampler
 from torchvision import transforms
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Sampler
 
-__all__ = ['TRAIN_TRANSFORM', 'TRANSFORM', 'SkinDataset', 'oversample', 'prepare']
+__all__ = ['TRAIN_TRANSFORM', 'TRANSFORM', 'SkinDataset', 'oversample', 'prepare', 'ResumableWeightedRandomSampler']
 
 class GaussianNoise(object):
     def __init__(self, mean=0., std=1.):
@@ -142,3 +142,23 @@ def prepare(data: pandas.DataFrame, test_size: int | float , seed: int, use_over
     test_df = pandas.concat([X_test, y_test], axis=1).reset_index(drop=True)
     
     return train_df, test_df
+
+
+class ResumableWeightedRandomSampler(Sampler):
+    def __init__(self, weights, num_samples, replacement=True, generator=None):
+        self.weights = torch.as_tensor(weights, dtype=torch.double)
+        self.num_samples = num_samples
+        self.replacement = replacement
+        self.generator = generator
+        self.current_position = 0
+
+    def __iter__(self):
+        rand_tensor = torch.multinomial(self.weights, self.num_samples - self.current_position, 
+                                        self.replacement, generator=self.generator)
+        return iter(rand_tensor.tolist()[self.current_position:])
+
+    def __len__(self):
+        return self.num_samples - self.current_position
+
+    def set_position(self, position):
+        self.current_position = position
