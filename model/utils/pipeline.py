@@ -12,9 +12,10 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader, WeightedRandomSampler
 from torch.optim import AdamW, Adam, SGD, RMSprop
 from torch.optim.lr_scheduler import ReduceLROnPlateau, CosineAnnealingLR
+from torch.cuda.amp import GradScaler, autocast
 from architectures import ISICModel
 from .criterion import get_lossfn, partial_auc
-from .data import SkinDataset, TRAIN_TRANSFORM, TRANSFORM
+from .data import SkinDataset, ResumableWeightedRandomSampler, TRAIN_TRANSFORM, TRANSFORM
 
 __all__= ['train_evaluate_model', 'test_model']
 
@@ -99,7 +100,7 @@ def train_evaluate_model(
 
     generator= torch.Generator()
     generator.manual_seed(config['seed'])
-    train_sampler= WeightedRandomSampler(
+    train_sampler= ResumableWeightedRandomSampler(
         weights= train_sample_weights,
         num_samples= len(train_sample_weights), 
         generator= generator
@@ -121,9 +122,10 @@ def train_evaluate_model(
         pin_memory= True,
         generator= generator
     )
-
+    scaler= GradScaler()
     total_layers = len(list(model.children()))
     layers_to_unfreeze= 0
+    last_batch = 0
     global_step= 1
     best_valid= float('inf')
     paucs= []
@@ -131,16 +133,20 @@ def train_evaluate_model(
         model.train()
         train_loss = 0.0
         all_labels, all_preds = [], []
-        
+
+        if last_batch >= len(train_loader):
+                    last_batch = 0 
+
+        train_sampler.set_position(last_batch)
         with tqdm(total= train_steps, desc= 'Training Batches', leave= False) as bar:
             for step, (images, tabular_cont, tabular_bin, labels) in enumerate(train_loader):
                 if step>= train_steps:
                     break
                 global_step+=1
+                last_batch+= 1
 
                 tabular_cont, tabular_bin= tabular_cont.to('cuda'), tabular_bin.to('cuda')
                 images, labels= images.to('cuda'), labels.to('cuda').float()
-
                 outputs= model(images, tabular_cont, tabular_bin)
                 if isinstance(outputs, Tuple):
                     outputs, proj = outputs
@@ -165,6 +171,9 @@ def train_evaluate_model(
 
                 bar.set_postfix(loss= loss.item(), refresh= True)
                 bar.update(1)
+
+                if last_batch == len(train_loader):
+                    last_batch = 0 
 
         #if (epoch+1) % 4== 0:
         #    layers_to_unfreeze= min(layers_to_unfreeze + 2, total_layers)
