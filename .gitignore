@@ -3,3 +3,5 @@
 /model/wandb
 /model/logs/
 **/__pycache__/
+*.pt
+*.csv
