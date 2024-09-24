@@ -53,6 +53,9 @@ The model is composed of three main components:
    - **Pre-training**: Pre-trained on the `mim_in22k_ft_in1k` dataset, a large corpus of high-resolution images.
    - **Head Modification**: The original classifier head of the model is replaced with an identity layer (`nn.Identity()`), allowing us to extract feature embeddings instead of final classification outputs.
 
+   ![EVA02 Architecture](<./media/backbone_arch.png>)  
+   Architecture diagram for backbone.  
+  
 2. **Tabular Data Network**:
    For the patient-specific metadata (age, sex, etc.), we construct a simple feed-forward neural network. This network processes **31 continuous features** and **6 binary features**, outputting a tabular representation that is combined with the image features.
 
