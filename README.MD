@@ -35,7 +35,7 @@ The competition utilized the SLICE-3D dataset, containing over 400,000 distinct 
 - **Metadata** : Patient data such as age and sex were provided as tabular data for integration into models.
 For a full description of the dataset: ISIC 2024 Dataset Abstract
 
-![Dataset Sample](./media/image.png)
+![Dataset Sample](./media/dataset_image.png)
 Examples of image types. The SLICE-3D dataset is comprised of tile images, which were extracted from 3D TBP images.
 
 ## Best-Performing Model: LightMultiModalNN
