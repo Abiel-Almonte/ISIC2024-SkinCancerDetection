@@ -10,12 +10,12 @@ __all__= ['LightMultiModalNN']
 class LightMultiModalNN(nn.Module, ISICModel):
     def __init__(
         self, 
-        tabular_hidden_dim:int= 128,
-        tabular_out_dim:int= 384,
-        tabular_dropout:float= 0.3,
-        classifier_hidden_dim:int= 64,
-        classifier_dropout:float= 0.2,
-    )-> None:
+        tabular_hidden_dim: int = 128,
+        tabular_out_dim: int = 380,
+        tabular_dropout: float = 0.3,
+        classifier_hidden_dim: int = 64,
+        classifier_dropout: float = 0.2,
+    ) -> None:
         
         super().__init__()
 
